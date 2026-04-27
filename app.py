@@ -1,3 +1,37 @@
+# ── AUTO-INSTALL MISSING PACKAGES ─────────────────────────────────────────────
+import subprocess, sys
+
+_REQUIRED = [
+    "streamlit",
+    "pandas",
+    "plotly",
+    "google-generativeai",
+    "supabase",
+    "streamlit-mic-recorder",
+    "reportlab",
+    "pydeck",
+    "SpeechRecognition",
+]
+
+def _ensure(pkg):
+    import importlib
+    # map install name → import name for packages that differ
+    _import_name = {
+        "google-generativeai": "google.generativeai",
+        "streamlit-mic-recorder": "streamlit_mic_recorder",
+        "SpeechRecognition": "speech_recognition",
+        "pillow": "PIL",
+    }
+    mod = _import_name.get(pkg, pkg.lower().replace("-", "_"))
+    try:
+        importlib.import_module(mod)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "--quiet"])
+
+for _pkg in _REQUIRED:
+    _ensure(_pkg)
+# ──────────────────────────────────────────────────────────────────────────────
+
 # Add this with your other imports
 try:
     from ai_assistant import get_ai_assistant, DataGeocoder
@@ -32,35 +66,16 @@ except ImportError:
     mic_recorder = None
     MIC_RECORDER_AVAILABLE = False
 # Third-party imports
-try:
-    import pandas as pd
-except ImportError:
-    raise ImportError("Required package 'pandas' is missing. Add 'pandas' to requirements.txt.")
-
+import pandas as pd
 from datetime import datetime
-
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
-except ImportError:
-    raise ImportError("Required package 'plotly' is missing. Add 'plotly' to requirements.txt.")
-
-try:
-    import streamlit as st
-except ImportError:
-    raise ImportError("Required package 'streamlit' is missing. Add 'streamlit' to requirements.txt.")
-
-try:
-    import google.generativeai as genai
-except ImportError:
-    raise ImportError("Required package 'google-generativeai' is missing. Add 'google-generativeai' to requirements.txt.")
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import streamlit as st
+import google.generativeai as genai
 
 # --- Supabase ---
-try:
-    from supabase import create_client, Client
-except ImportError:
-    raise ImportError("Required package 'supabase' is missing. Add 'supabase' to requirements.txt.")
+from supabase import create_client, Client
 
 @st.cache_resource
 def init_supabase():
