@@ -2349,7 +2349,7 @@ def render_bird_strike_form():
         st.info("✨ Form pre-filled with OCR extracted data. Please verify and correct any fields.")
     
     # Form container
-    with st.form("bird_strike_form", clear_on_submit=False):
+    with st.form("bird_strike_form"):
         
         # ========== SECTION A: INCIDENT IDENTIFICATION ==========
         st.markdown("""<div class="form-section">
@@ -2400,13 +2400,18 @@ def render_bird_strike_form():
                 placeholder="e.g., PF-101"
             )
         with col2:
-            aircraft_reg = st.selectbox(
-                "Aircraft Registration *",
-                options=[""] + [a["registration"] for a in AIRCRAFT_FLEET],
-                index=0 if not ocr_data.get('aircraft_reg') else (
-                    [a["registration"] for a in AIRCRAFT_FLEET].index(ocr_data['aircraft_reg']) + 1 
-                    if ocr_data.get('aircraft_reg') in [a["registration"] for a in AIRCRAFT_FLEET] else 0
-                )
+            fleet_options = [""] + list(AIRCRAFT_FLEET.keys())
+
+# Find the correct index safely if you have OCR data
+default_index = 0
+if ocr_data.get('aircraft_reg') in fleet_options:
+    default_index = fleet_options.index(ocr_data['aircraft_reg'])
+
+aircraft_reg = st.selectbox(
+    "Aircraft Registration *",
+    options=fleet_options,
+    index=default_index
+)
             )
         with col3:
             # Auto-populate aircraft type based on registration
@@ -2810,12 +2815,12 @@ def render_bird_strike_form():
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             submitted = st.form_submit_button(
-                "📤 Submit Bird Strike Report",
-                use_container_width=True,
-                type="primary"
-            )
-        
-        if submitted:
+        "📤 Submit Bird Strike Report",
+        use_container_width=True,
+        type="primary"
+    )
+
+    if submitted:
             # Validation
             errors = []
             if not flight_number:
