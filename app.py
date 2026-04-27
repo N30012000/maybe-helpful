@@ -32,16 +32,35 @@ except ImportError:
     mic_recorder = None
     MIC_RECORDER_AVAILABLE = False
 # Third-party imports
-import pandas as pd
-from datetime import datetime
-import plotly.express as px
-import plotly.graph_objects as go
-import streamlit as st
-import google.generativeai as genai
-from plotly.subplots import make_subplots
+try:
+    import pandas as pd
+except ImportError:
+    raise ImportError("Required package 'pandas' is missing. Add 'pandas' to requirements.txt.")
 
-# --- ADD THIS ---
-from supabase import create_client, Client
+from datetime import datetime
+
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+except ImportError:
+    raise ImportError("Required package 'plotly' is missing. Add 'plotly' to requirements.txt.")
+
+try:
+    import streamlit as st
+except ImportError:
+    raise ImportError("Required package 'streamlit' is missing. Add 'streamlit' to requirements.txt.")
+
+try:
+    import google.generativeai as genai
+except ImportError:
+    raise ImportError("Required package 'google-generativeai' is missing. Add 'google-generativeai' to requirements.txt.")
+
+# --- Supabase ---
+try:
+    from supabase import create_client, Client
+except ImportError:
+    raise ImportError("Required package 'supabase' is missing. Add 'supabase' to requirements.txt.")
 
 @st.cache_resource
 def init_supabase():
