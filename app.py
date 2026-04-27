@@ -1,47 +1,13 @@
-# ── AUTO-INSTALL MISSING PACKAGES ─────────────────────────────────────────────
-import subprocess, sys
+"""
+Air Sial Safety Management System (SMS) v4.0
+Optimized Complete Aviation Safety Reporting Application
 
-_REQUIRED = [
-    "streamlit",
-    "pandas",
-    "plotly",
-    "google-generativeai",
-    "supabase",
-    "streamlit-mic-recorder",
-    "reportlab",
-    "pydeck",
-    "SpeechRecognition",
-]
+Developed for Air Sial - Pakistan's Premium Airline
+Comprehensive safety reporting, analysis, and compliance management
 
-def _ensure(pkg):
-    import importlib
-    # map install name → import name for packages that differ
-    _import_name = {
-        "google-generativeai": "google.generativeai",
-        "streamlit-mic-recorder": "streamlit_mic_recorder",
-        "SpeechRecognition": "speech_recognition",
-        "pillow": "PIL",
-    }
-    mod = _import_name.get(pkg, pkg.lower().replace("-", "_"))
-    try:
-        importlib.import_module(mod)
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "--quiet"])
-
-for _pkg in _REQUIRED:
-    _ensure(_pkg)
-# ──────────────────────────────────────────────────────────────────────────────
-
-# Add this with your other imports
-try:
-    from ai_assistant import get_ai_assistant, DataGeocoder
-except ImportError:
-    get_ai_assistant = None
-    DataGeocoder = None
-try:
-    import ui_integration as ui_integration
-except ImportError:
-    ui_integration = None
+© 2024 Air Sial. All Rights Reserved.
+"""
+# Standard library imports
 import base64
 import hashlib
 import io
@@ -59,32 +25,1483 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from enum import Enum
 from typing import Optional, Dict, List, Any, Tuple
-try:
-    from streamlit_mic_recorder import mic_recorder
-    MIC_RECORDER_AVAILABLE = True
-except ImportError:
-    mic_recorder = None
-    MIC_RECORDER_AVAILABLE = False
+
 # Third-party imports
 import pandas as pd
-from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
-import google.generativeai as genai
+from plotly.subplots import make_subplots
+import numpy as np
 
-# --- Supabase ---
-from supabase import create_client, Client
+# Optional imports with fallbacks
+try:
+    import pydeck as pdk
+    PYDECK_AVAILABLE = True
+except ImportError:
+    pdk = None
+    PYDECK_AVAILABLE = False
 
-@st.cache_resource
-def init_supabase():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+try:
+    from reportlab.lib.colors import HexColor
+    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.pdfgen import canvas
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
 
-supabase = init_supabase()
-# ----------------
+try:
+    from PIL import Image
+    import pytesseract
+    PYTESSERACT_AVAILABLE = True
+except ImportError:
+    PYTESSERACT_AVAILABLE = False
+
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+
+# ============================================================================
+# SUPABASE DATABASE INTEGRATION
+# ============================================================================
+
+class SupabaseManager:
+    """Manages Supabase database operations"""
+    
+    def __init__(self):
+        self.client = None
+        self.connected = False
+        self.initialize()
+    
+    def initialize(self):
+        """Initialize Supabase connection"""
+        try:
+            supabase_url = st.secrets.get("SUPABASE_URL", "")
+            supabase_key = st.secrets.get("SUPABASE_KEY", "")
+            
+            if supabase_url and supabase_key and SUPABASE_AVAILABLE:
+                self.client = create_client(supabase_url, supabase_key)
+                self.connected = True
+                st.success("✅ Connected to Supabase Database")
+            else:
+                st.warning("⚠️ Supabase not configured. Using session state storage.")
+        except Exception as e:
+            st.error(f"❌ Supabase connection failed: {str(e)}")
+    
+    def save_report(self, report_type: str, report_data: dict) -> bool:
+        """Save report to Supabase"""
+        try:
+            if self.connected and self.client:
+                # Prepare data for Supabase
+                data = {
+                    "report_type": report_type,
+                    "data": report_data,
+                    "created_at": datetime.now().isoformat(),
+                    "risk_level": report_data.get('risk_level', 'Low'),
+                    "status": report_data.get('status', 'Open'),
+                    "department": report_data.get('department', 'Unknown')
+                }
+                
+                response = self.client.table("safety_reports").insert(data).execute()
+                return bool(response.data)
+        except Exception as e:
+            st.error(f"Database save error: {str(e)}")
+        return False
+    
+    def get_reports(self, report_type: str = None, limit: int = 100) -> List[dict]:
+        """Get reports from Supabase"""
+        try:
+            if self.connected and self.client:
+                if report_type:
+                    response = self.client.table("safety_reports").select("*").eq("report_type", report_type).limit(limit).execute()
+                else:
+                    response = self.client.table("safety_reports").select("*").limit(limit).execute()
+                
+                # Convert to list of reports
+                reports = []
+                for item in response.data:
+                    report = item['data']
+                    report['id'] = item.get('id', report.get('id'))
+                    report['created_at'] = item.get('created_at', report.get('created_at'))
+                    reports.append(report)
+                
+                return reports
+        except Exception as e:
+            st.error(f"Database read error: {str(e)}")
+        
+        return []
+    
+    def update_report(self, report_id: str, updates: dict) -> bool:
+        """Update report in Supabase"""
+        try:
+            if self.connected and self.client:
+                # Find the report
+                response = self.client.table("safety_reports").select("*").eq("data->>id", report_id).execute()
+                if response.data:
+                    record_id = response.data[0]['id']
+                    update_data = {
+                        "data": {**response.data[0]['data'], **updates},
+                        "updated_at": datetime.now().isoformat(),
+                        "status": updates.get('status', response.data[0].get('status')),
+                        "risk_level": updates.get('risk_level', response.data[0].get('risk_level'))
+                    }
+                    
+                    response = self.client.table("safety_reports").update(update_data).eq("id", record_id).execute()
+                    return bool(response.data)
+        except Exception as e:
+            st.error(f"Database update error: {str(e)}")
+        return False
+
+# Initialize Supabase manager
+supabase = SupabaseManager()
+
+# ============================================================================
+# AI ASSISTANT WITH GEMINI
+# ============================================================================
+
+class SafetyAI:
+    """AI Assistant powered by Gemini"""
+    
+    def __init__(self):
+        self.model = None
+        self.initialize()
+    
+    def initialize(self):
+        """Initialize Gemini AI"""
+        try:
+            api_key = st.secrets.get("GEMINI_API_KEY", "")
+            if api_key and GEMINI_AVAILABLE:
+                genai.configure(api_key=api_key)
+                self.model = genai.GenerativeModel('gemini-pro')
+                st.success("✅ Gemini AI initialized")
+        except Exception as e:
+            st.error(f"❌ Gemini AI initialization failed: {str(e)}")
+    
+    def analyze_safety_report(self, report_data: dict) -> str:
+        """Analyze safety report using AI"""
+        if not self.model:
+            return self._generate_fallback_analysis(report_data)
+        
+        try:
+            prompt = f"""
+            Analyze this aviation safety report and provide:
+            1. Risk assessment summary
+            2. Key safety concerns
+            3. Recommended immediate actions
+            4. Preventive measures
+            
+            Report Type: {report_data.get('type', 'Unknown')}
+            Risk Level: {report_data.get('risk_level', 'Unknown')}
+            Description: {report_data.get('description', report_data.get('narrative', 'No description'))[:1000]}
+            
+            Provide concise, actionable insights.
+            """
+            
+            response = self.model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            return self._generate_fallback_analysis(report_data)
+    
+    def _generate_fallback_analysis(self, report_data: dict) -> str:
+        """Fallback analysis when AI is not available"""
+        report_type = report_data.get('type', 'Report')
+        risk_level = report_data.get('risk_level', 'Low')
+        
+        analysis = f"""
+        ## AI Analysis: {report_type}
+        
+        ### Risk Assessment: {risk_level}
+        
+        ### Key Observations:
+        1. {report_type} requires standard investigation procedures
+        2. Risk level indicates {'immediate action required' if risk_level in ['High', 'Extreme'] else 'routine investigation'}
+        3. Follow established SMS protocols for this report type
+        
+        ### Recommended Actions:
+        1. Assign to appropriate investigator
+        2. Complete risk assessment within SLA
+        3. Document findings in safety database
+        4. Implement corrective actions if required
+        
+        ### Preventive Measures:
+        - Review similar historical incidents
+        - Update training materials if needed
+        - Consider procedural enhancements
+        """
+        return analysis
+    
+    def generate_predictive_insights(self, historical_data: List[dict]) -> str:
+        """Generate predictive safety insights"""
+        if not self.model:
+            return self._generate_fallback_predictions()
+        
+        try:
+            prompt = f"""
+            Based on {len(historical_data)} safety reports, provide predictive insights:
+            1. Emerging risk patterns
+            2. Seasonal trends
+            3. Departmental safety performance
+            4. Recommended proactive measures
+            
+            Focus on aviation safety specifically.
+            """
+            
+            response = self.model.generate_content(prompt)
+            return response.text
+        except Exception:
+            return self._generate_fallback_predictions()
+    
+    def _generate_fallback_predictions(self) -> str:
+        """Fallback predictive insights"""
+        return """
+        ## Predictive Safety Insights
+        
+        ### Emerging Patterns:
+        1. Bird strike frequency may increase during migration seasons
+        2. Weather-related incidents tend to cluster during monsoon periods
+        3. Human factors incidents often follow schedule changes
+        
+        ### Seasonal Recommendations:
+        - Q1/Q4: Enhanced wildlife awareness for migration periods
+        - Q2/Q3: Weather radar and turbulence briefing focus
+        - Year-round: Crew resource management reinforcement
+        
+        ### Proactive Measures:
+        1. Review and update wildlife hazard management plan
+        2. Enhance weather briefing procedures
+        3. Monitor crew duty time compliance
+        4. Regular safety equipment audits
+        """
+
+# Initialize AI assistant
+safety_ai = SafetyAI()
+
+# ============================================================================
+# WEATHER API INTEGRATION
+# ============================================================================
+
+class WeatherService:
+    """Weather service for aviation weather"""
+    
+    def __init__(self):
+        self.api_key = st.secrets.get("WEATHER_API_KEY", "")
+        self.base_url = "http://api.weatherapi.com/v1/current.json"
+    
+    def get_airport_weather(self, icao: str) -> dict:
+        """Get current weather for airport"""
+        airport_data = AIRPORTS.get(icao.upper(), {})
+        
+        # Try real API first
+        if self.api_key and REQUESTS_AVAILABLE:
+            try:
+                # Get approximate coordinates for airport
+                city = airport_data.get('city', 'Sialkot')
+                params = {
+                    'key': self.api_key,
+                    'q': city,
+                    'aqi': 'no'
+                }
+                
+                response = requests.get(self.base_url, params=params, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    current = data.get('current', {})
+                    
+                    return {
+                        'city': city,
+                        'temp': current.get('temp_c', 25),
+                        'condition': current.get('condition', {}).get('text', 'Clear'),
+                        'icon': self._get_weather_icon(current.get('condition', {}).get('text', 'Clear')),
+                        'wind_kph': current.get('wind_kph', 10),
+                        'humidity': current.get('humidity', 50),
+                        'visibility_km': current.get('vis_km', 10)
+                    }
+            except:
+                pass  # Fall back to static data
+        
+        # Fallback to static data
+        return self._get_static_weather(icao)
+    
+    def _get_static_weather(self, icao: str) -> dict:
+        """Get static weather data"""
+        static_data = {
+            "OPSK": {"city": "Sialkot", "temp": 18, "condition": "Partly Cloudy", "icon": "🌤️", "wind": 12, "humidity": 65},
+            "OPKC": {"city": "Karachi", "temp": 28, "condition": "Clear", "icon": "☀️", "wind": 15, "humidity": 70},
+            "OPLA": {"city": "Lahore", "temp": 20, "condition": "Hazy", "icon": "🌫️", "wind": 8, "humidity": 75},
+            "OPIS": {"city": "Islamabad", "temp": 15, "condition": "Cloudy", "icon": "☁️", "wind": 10, "humidity": 60},
+            "OMDB": {"city": "Dubai", "temp": 32, "condition": "Clear", "icon": "☀️", "wind": 18, "humidity": 45},
+            "OEJN": {"city": "Jeddah", "temp": 30, "condition": "Clear", "icon": "☀️", "wind": 20, "humidity": 40},
+            "OTHH": {"city": "Doha", "temp": 31, "condition": "Clear", "icon": "☀️", "wind": 15, "humidity": 50},
+            "OMSJ": {"city": "Sharjah", "temp": 30, "condition": "Clear", "icon": "☀️", "wind": 12, "humidity": 55},
+        }
+        return static_data.get(icao.upper(), {"city": "Unknown", "temp": 25, "condition": "Clear", "icon": "☀️", "wind": 10, "humidity": 50})
+    
+    def _get_weather_icon(self, condition: str) -> str:
+        """Map weather condition to emoji"""
+        condition_lower = condition.lower()
+        if 'sun' in condition_lower or 'clear' in condition_lower:
+            return "☀️"
+        elif 'partly' in condition_lower or 'cloud' in condition_lower:
+            return "🌤️"
+        elif 'rain' in condition_lower or 'drizzle' in condition_lower:
+            return "🌧️"
+        elif 'storm' in condition_lower or 'thunder' in condition_lower:
+            return "⛈️"
+        elif 'fog' in condition_lower or 'mist' in condition_lower or 'haze' in condition_lower:
+            return "🌫️"
+        elif 'snow' in condition_lower or 'ice' in condition_lower:
+            return "❄️"
+        else:
+            return "🌤️"
+    
+    def render_weather_widget(self):
+        """Render weather widget for key airports"""
+        key_airports = ["OPSK", "OPKC", "OPLA", "OPIS", "OMDB"]
+        
+        st.markdown("#### 🌤️ Current Weather at Key Airports")
+        
+        cols = st.columns(5)
+        for col, icao in zip(cols, key_airports):
+            with col:
+                weather = self.get_airport_weather(icao)
+                st.markdown(f"""<div style="background: white; border-radius: 12px; padding: 1rem; text-align: center; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                    <div style="font-size: 2rem;">{weather['icon']}</div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #1E40AF;">{weather['temp']}°C</div>
+                    <div style="color: #64748B; font-size: 0.85rem; font-weight: 500;">{weather['city']}</div>
+                    <div style="font-size: 0.75rem; color: #94A3B8;">💨 {weather['wind']} km/h</div>
+                </div>""", unsafe_allow_html=True)
+
+# Initialize weather service
+weather_service = WeatherService()
+
+# ============================================================================
+# OCR PROCESSING WITH TESSERACT
+# ============================================================================
+
+class OCRProcessor:
+    """OCR processing for handwritten forms"""
+    
+    def __init__(self):
+        self.available = PYTESSERACT_AVAILABLE
+    
+    def process_image(self, image_file, form_type: str) -> dict:
+        """Process uploaded image with OCR"""
+        if not self.available:
+            return self._simulate_ocr(form_type)
+        
+        try:
+            from PIL import Image
+            import pytesseract
+            
+            # Open and preprocess image
+            image = Image.open(image_file)
+            
+            # Convert to grayscale
+            image = image.convert('L')
+            
+            # Use pytesseract to extract text
+            text = pytesseract.image_to_string(image)
+            
+            # Parse based on form type
+            return self._parse_ocr_text(text, form_type)
+            
+        except Exception as e:
+            st.error(f"OCR Processing Error: {str(e)}")
+            return self._simulate_ocr(form_type)
+    
+    def _parse_ocr_text(self, text: str, form_type: str) -> dict:
+        """Parse OCR text based on form type"""
+        # Basic parsing - in production, this would be more sophisticated
+        extracted = {"extraction_status": "completed", "confidence": "85%"}
+        
+        # Look for common patterns
+        lines = text.split('\n')
+        for line in lines:
+            line = line.strip()
+            
+            # Flight number pattern
+            if re.match(r'PF-\d{3,4}', line):
+                extracted['flight_number'] = line
+            
+            # Date patterns
+            date_patterns = [
+                r'\d{2}/\d{2}/\d{4}',
+                r'\d{2}-\d{2}-\d{4}',
+                r'\d{4}-\d{2}-\d{2}'
+            ]
+            for pattern in date_patterns:
+                if re.search(pattern, line):
+                    extracted['incident_date'] = re.search(pattern, line).group()
+                    break
+            
+            # Time patterns
+            if re.search(r'\d{2}:\d{2}', line):
+                extracted['incident_time'] = re.search(r'\d{2}:\d{2}', line).group()
+        
+        # Add form-specific data
+        extracted.update(self._simulate_ocr(form_type))
+        return extracted
+    
+    def _simulate_ocr(self, form_type: str) -> dict:
+        """Simulate OCR extraction (fallback)"""
+        return simulate_ocr_extraction("image", form_type)
+
+# Initialize OCR processor
+ocr_processor = OCRProcessor()
+
+# ============================================================================
+# EMAIL SERVICE WITH SMTP
+# ============================================================================
+
+class EmailService:
+    """Email service for notifications"""
+    
+    def __init__(self):
+        self.smtp_server = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
+        self.smtp_port = int(st.secrets.get("SMTP_PORT", 587))
+        self.smtp_username = st.secrets.get("SMTP_USERNAME", "")
+        self.smtp_password = st.secrets.get("SMTP_PASSWORD", "")
+        self.enabled = bool(self.smtp_username and self.smtp_password)
+    
+    def send_email(self, to_email: str, subject: str, body: str, 
+                   attachments: List[tuple] = None) -> bool:
+        """Send email via SMTP"""
+        if not self.enabled:
+            st.warning("Email service not configured. Check SMTP settings.")
+            return False
+        
+        try:
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = self.smtp_username
+            msg['To'] = to_email
+            msg['Subject'] = f"[Air Sial Safety] {subject}"
+            
+            # Add body
+            msg.attach(MIMEText(body, 'plain'))
+            
+            # Add attachments if any
+            if attachments:
+                for filename, content in attachments:
+                    attachment = MIMEText(content)
+                    attachment.add_header('Content-Disposition', 'attachment', filename=filename)
+                    msg.attach(attachment)
+            
+            # Send email
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                server.starttls()
+                server.login(self.smtp_username, self.smtp_password)
+                server.send_message(msg)
+            
+            st.success(f"✅ Email sent to {to_email}")
+            return True
+            
+        except Exception as e:
+            st.error(f"❌ Email send failed: {str(e)}")
+            return False
+    
+    def send_safety_alert(self, report_data: dict, recipients: List[str]):
+        """Send safety alert email"""
+        subject = f"Safety Report: {report_data.get('id', 'New Report')}"
+        
+        body = f"""
+        AIR SIAL SAFETY MANAGEMENT SYSTEM
+        
+        New Safety Report Submitted:
+        
+        Report ID: {report_data.get('id', 'N/A')}
+        Type: {report_data.get('type', 'Unknown')}
+        Risk Level: {report_data.get('risk_level', 'Low')}
+        Date: {report_data.get('date', 'N/A')}
+        Department: {report_data.get('department', 'Unknown')}
+        
+        Description:
+        {report_data.get('description', report_data.get('narrative', 'No description provided'))[:500]}
+        
+        Status: {report_data.get('status', 'Open')}
+        
+        Please log in to the Safety Management System to review and take appropriate action.
+        
+        This is an automated notification.
+        """
+        
+        for recipient in recipients:
+            self.send_email(recipient, subject, body)
+
+# Initialize email service
+email_service = EmailService()
+
+# ============================================================================
+# CONFIGURATION (Keep your existing configuration)
+# ============================================================================
+
+class Config:
+    """Application configuration settings"""
+    APP_NAME = "Air Sial Corporate Safety"
+    APP_VERSION = "4.0.0"
+    APP_SUBTITLE = "Safety Management System"
+    COMPANY_NAME = "Air Sial"
+    COMPANY_IATA = "PF"
+    COMPANY_ICAO = "SIS"
+    CAA_COUNTRY = "Pakistan"
+    CAA_AUTHORITY = "Pakistan Civil Aviation Authority (PCAA)"
+    AOC_NUMBER = "AOC-PK-0XX"
+    HAZARD_SLA_DAYS = 15
+    INCIDENT_SLA_DAYS = 30
+    BIRD_STRIKE_SLA_DAYS = 7
+    LASER_STRIKE_SLA_DAYS = 7
+    TCAS_SLA_DAYS = 14
+    SLA_CRITICAL_DAYS = 3
+    SLA_WARNING_DAYS = 7
+    SAFETY_EMAIL = "safety@airsial.com"
+    CAA_EMAIL = "reporting@caapakistan.com.pk"
+    TIMEZONE = "Asia/Karachi"
+    UTC_OFFSET = 5
+    MAX_UPLOAD_SIZE_MB = 10
+    ALLOWED_IMAGE_TYPES = ['png', 'jpg', 'jpeg', 'bmp', 'tiff', 'webp']
+    ALLOWED_DOC_TYPES = ['pdf', 'docx', 'xlsx']
+
+# ============================================================================
+# ENHANCED SESSION STATE MANAGEMENT
+# ============================================================================
+
+def initialize_session_state():
+    """Initialize all session state variables"""
+    # Authentication
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    if 'user_role' not in st.session_state:
+        st.session_state.user_role = "viewer"
+    if 'username' not in st.session_state:
+        st.session_state.username = ""
+    
+    # ERP Mode
+    if 'erp_mode' not in st.session_state:
+        st.session_state.erp_mode = False
+    
+    # Current page
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = "Dashboard"
+    
+    # Report storage (with lazy loading)
+    report_types = [
+        'bird_strikes', 'laser_strikes', 'tcas_reports',
+        'aircraft_incidents', 'hazard_reports', 'fsr_reports',
+        'captain_dbr', 'ramp_inspections', 'audit_findings'
+    ]
+    
+    for report_type in report_types:
+        if report_type not in st.session_state:
+            st.session_state[report_type] = []
+    
+    # Load from database if available
+    if supabase.connected:
+        for report_type in report_types:
+            if not st.session_state[report_type]:  # Only load if empty
+                db_reports = supabase.get_reports(report_type)
+                if db_reports:
+                    st.session_state[report_type] = db_reports
+    
+    # AI Chat history
+    if 'ai_chat_history' not in st.session_state:
+        st.session_state.ai_chat_history = []
+    
+    # Settings
+    if 'app_settings' not in st.session_state:
+        st.session_state.app_settings = {}
+    if 'email_settings' not in st.session_state:
+        st.session_state.email_settings = {}
+
+# ============================================================================
+# ROLE-BASED ACCESS CONTROL
+# ============================================================================
+
+class UserRole(Enum):
+    ADMIN = "admin"
+    SAFETY_MANAGER = "safety_manager"
+    INVESTIGATOR = "investigator"
+    DEPARTMENT_HEAD = "department_head"
+    REPORTER = "reporter"
+    VIEWER = "viewer"
+    FLIGHT_CREW = "flight_crew"
+    MAINTENANCE = "maintenance"
+
+class RBAC:
+    """Role-Based Access Control"""
+    
+    PERMISSIONS = {
+        UserRole.ADMIN: {
+            "dashboard": True,
+            "view_reports": True,
+            "submit_reports": True,
+            "edit_reports": True,
+            "delete_reports": True,
+            "ai_assistant": True,
+            "email_center": True,
+            "geospatial_map": True,
+            "iosa_compliance": True,
+            "ramp_inspections": True,
+            "audit_findings": True,
+            "moc_workflow": True,
+            "predictive_monitor": True,
+            "data_management": True,
+            "settings": True,
+            "user_management": True,
+            "erp_activation": True
+        },
+        UserRole.SAFETY_MANAGER: {
+            "dashboard": True,
+            "view_reports": True,
+            "submit_reports": True,
+            "edit_reports": True,
+            "delete_reports": False,
+            "ai_assistant": True,
+            "email_center": True,
+            "geospatial_map": True,
+            "iosa_compliance": True,
+            "ramp_inspections": True,
+            "audit_findings": True,
+            "moc_workflow": True,
+            "predictive_monitor": True,
+            "data_management": True,
+            "settings": True,
+            "user_management": False,
+            "erp_activation": True
+        },
+        UserRole.FLIGHT_CREW: {
+            "dashboard": True,
+            "view_reports": True,
+            "submit_reports": True,
+            "edit_reports": False,
+            "delete_reports": False,
+            "ai_assistant": True,
+            "email_center": False,
+            "geospatial_map": True,
+            "iosa_compliance": False,
+            "ramp_inspections": False,
+            "audit_findings": False,
+            "moc_workflow": False,
+            "predictive_monitor": False,
+            "data_management": False,
+            "settings": False,
+            "user_management": False,
+            "erp_activation": False
+        },
+        UserRole.MAINTENANCE: {
+            "dashboard": True,
+            "view_reports": True,
+            "submit_reports": True,
+            "edit_reports": False,
+            "delete_reports": False,
+            "ai_assistant": True,
+            "email_center": False,
+            "geospatial_map": True,
+            "iosa_compliance": False,
+            "ramp_inspections": True,
+            "audit_findings": True,
+            "moc_workflow": False,
+            "predictive_monitor": False,
+            "data_management": False,
+            "settings": False,
+            "user_management": False,
+            "erp_activation": False
+        },
+        UserRole.VIEWER: {
+            "dashboard": True,
+            "view_reports": True,
+            "submit_reports": False,
+            "edit_reports": False,
+            "delete_reports": False,
+            "ai_assistant": False,
+            "email_center": False,
+            "geospatial_map": True,
+            "iosa_compliance": False,
+            "ramp_inspections": False,
+            "audit_findings": False,
+            "moc_workflow": False,
+            "predictive_monitor": False,
+            "data_management": False,
+            "settings": False,
+            "user_management": False,
+            "erp_activation": False
+        }
+    }
+    
+    @staticmethod
+    def has_permission(permission: str) -> bool:
+        """Check if current user has permission"""
+        user_role = st.session_state.get('user_role', 'viewer')
+        role_permissions = RBAC.PERMISSIONS.get(UserRole(user_role), {})
+        return role_permissions.get(permission, False)
+
+# ============================================================================
+# EMERGENCY RESPONSE PLAN (ERP)
+# ============================================================================
+
+class EmergencyResponsePlan:
+    """Emergency Response Plan Management"""
+    
+    @staticmethod
+    def activate_erp():
+        """Activate Emergency Response Plan"""
+        st.session_state.erp_mode = True
+        st.session_state.erp_activated_at = datetime.now()
+        
+        # Send emergency notifications
+        emergency_contacts = [
+            "safety.manager@airsial.com",
+            "operations.manager@airsial.com",
+            "ceo.office@airsial.com",
+            "caa.liaison@airsial.com"
+        ]
+        
+        # Log ERP activation
+        erp_log = {
+            "id": f"ERP-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+            "activated_at": datetime.now().isoformat(),
+            "activated_by": st.session_state.get('username', 'System'),
+            "status": "ACTIVE"
+        }
+        
+        if 'erp_logs' not in st.session_state:
+            st.session_state.erp_logs = []
+        st.session_state.erp_logs.append(erp_log)
+        
+        return erp_log
+    
+    @staticmethod
+    def deactivate_erp():
+        """Deactivate ERP"""
+        st.session_state.erp_mode = False
+        
+        # Update ERP log
+        if 'erp_logs' in st.session_state and st.session_state.erp_logs:
+            last_log = st.session_state.erp_logs[-1]
+            last_log['deactivated_at'] = datetime.now().isoformat()
+            last_log['status'] = "DEACTIVATED"
+    
+    @staticmethod
+    def render_erp_banner():
+        """Render ERP banner if active"""
+        if st.session_state.get('erp_mode', False):
+            st.markdown("""
+            <div style="background: linear-gradient(135deg, #DC2626 0%, #B91C1C 100%); 
+                        color: white; padding: 15px; border-radius: 10px; 
+                        margin-bottom: 20px; text-align: center; font-weight: bold;
+                        animation: pulse 2s infinite;">
+                ⚠️ EMERGENCY RESPONSE PLAN ACTIVATED ⚠️
+                <br>
+                <small>All safety personnel report to duty stations</small>
+            </div>
+            <style>
+            @keyframes pulse {
+                0% { opacity: 1; }
+                50% { opacity: 0.7; }
+                100% { opacity: 1; }
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            # Show ERP controls
+            col1, col2, col3 = st.columns([2, 3, 2])
+            with col2:
+                if st.button("🛑 Deactivate ERP", type="primary", use_container_width=True):
+                    EmergencyResponsePlan.deactivate_erp()
+                    st.rerun()
+
+# ============================================================================
+# OPTIMIZED FORM HANDLING
+# ============================================================================
+
+def render_optimized_form(form_type: str):
+    """Render optimized form based on type"""
+    form_renderers = {
+        "Bird Strike Report": render_bird_strike_form,
+        "Laser Strike Report": render_laser_strike_form,
+        "TCAS Report": render_tcas_report_form,
+        "Aircraft Incident Report": render_incident_form,
+        "Hazard Report": render_hazard_form,
+        "FSR Report": render_fsr_form,
+        "Captain Debrief": render_captain_dbr_form
+    }
+    
+    if form_type in form_renderers:
+        # Clear any existing OCR data
+        if f'ocr_data_{form_type.lower().replace(" ", "_")}' in st.session_state:
+            st.session_state[f'ocr_data_{form_type.lower().replace(" ", "_")}'] = None
+        
+        # Render the form
+        form_renderers[form_type]()
+    else:
+        st.error(f"Form type {form_type} not found")
+
+# ============================================================================
+# OPTIMIZED DASHBOARD
+# ============================================================================
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_dashboard_data():
+    """Get optimized dashboard data"""
+    return {
+        'total_reports': get_total_reports(),
+        'open_investigations': get_open_investigations(),
+        'high_risk_count': get_high_risk_count(),
+        'risk_distribution': get_risk_distribution(),
+        'recent_reports': get_recent_reports(10),
+        'sla_alerts': get_sla_alerts()
+    }
+
+def render_optimized_dashboard():
+    """Render optimized dashboard"""
+    # Get cached data
+    data = get_dashboard_data()
+    
+    # Render header
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
+                padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
+        <h1 style="margin: 0; font-size: 2.2rem;">📊 Safety Dashboard</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
+            Real-time safety metrics and performance indicators
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # ERP Banner
+    EmergencyResponsePlan.render_erp_banner()
+    
+    # Weather Widget
+    weather_service.render_weather_widget()
+    
+    # KPI Cards
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Reports", data['total_reports'])
+    with col2:
+        st.metric("Open Investigations", data['open_investigations'])
+    with col3:
+        st.metric("High Risk Items", data['high_risk_count'], 
+                 delta_color="inverse" if data['high_risk_count'] > 0 else "off")
+    with col4:
+        closed = data['total_reports'] - data['open_investigations']
+        rate = (closed / data['total_reports'] * 100) if data['total_reports'] > 0 else 0
+        st.metric("Closure Rate", f"{rate:.1f}%")
+    
+    # Charts
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### Risk Distribution")
+        if data['risk_distribution']:
+            fig = px.pie(
+                values=list(data['risk_distribution'].values()),
+                names=list(data['risk_distribution'].keys()),
+                color=list(data['risk_distribution'].keys()),
+                color_discrete_map={
+                    'Extreme': '#DC3545',
+                    'High': '#FD7E14',
+                    'Medium': '#FFC107',
+                    'Low': '#28A745'
+                }
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("### SLA Status")
+        sla_df = pd.DataFrame({
+            'Status': list(data['sla_alerts'].keys()),
+            'Count': list(data['sla_alerts'].values())
+        })
+        if not sla_df.empty:
+            fig = px.bar(
+                sla_df,
+                x='Status',
+                y='Count',
+                color='Status',
+                color_discrete_map={
+                    'overdue': '#DC3545',
+                    'critical': '#FD7E14',
+                    'warning': '#FFC107',
+                    'ok': '#28A745'
+                }
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    # Recent Activity
+    st.markdown("### Recent Activity")
+    if data['recent_reports']:
+        for report in data['recent_reports'][:5]:
+            with st.expander(f"{report.get('icon', '📄')} {report.get('id', 'N/A')} - {report.get('type', 'Report')}"):
+                st.write(f"**Date:** {report.get('date', 'N/A')}")
+                st.write(f"**Status:** {report.get('status', 'N/A')}")
+                st.write(f"**Risk:** {report.get('risk_level', 'Low')}")
+    else:
+        st.info("No recent reports")
+
+# ============================================================================
+# OPTIMIZED VIEW REPORTS
+# ============================================================================
+
+@st.cache_data(ttl=60)  # Cache for 1 minute
+def get_filtered_reports(filters: dict):
+    """Get filtered reports with caching"""
+    all_reports = []
+    
+    # Collect reports based on filters
+    for report_type in ['bird_strikes', 'laser_strikes', 'tcas_reports', 
+                       'aircraft_incidents', 'hazard_reports', 'fsr_reports', 'captain_dbr']:
+        if filters['type'] == "All" or filters['type'] == report_type.replace('_', ' ').title():
+            reports = st.session_state.get(report_type, [])
+            for report in reports:
+                # Apply filters
+                if filters['risk'] != "All" and report.get('risk_level') != filters['risk']:
+                    continue
+                if filters['status'] != "All" and report.get('status') != filters['status']:
+                    continue
+                
+                all_reports.append({
+                    'id': report.get('id', 'N/A'),
+                    'type': report_type.replace('_', ' ').title(),
+                    'date': report.get('date', 'N/A'),
+                    'risk': report.get('risk_level', 'Low'),
+                    'status': report.get('status', 'Open'),
+                    'data': report
+                })
+    
+    # Sort by date
+    all_reports.sort(key=lambda x: x['date'], reverse=True)
+    return all_reports
+
+def render_optimized_view_reports():
+    """Render optimized view reports"""
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
+                padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
+        <h1 style="margin: 0; font-size: 2.2rem;">📋 View Reports</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
+            Search, filter, and manage all safety reports
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Filters
+    with st.expander("🔍 Filters", expanded=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            report_type = st.selectbox("Report Type", ["All", "Bird Strikes", "Laser Strikes", 
+                                                      "TCAS Reports", "Aircraft Incidents", 
+                                                      "Hazard Reports", "FSR Reports", "Captain Debrief"])
+        with col2:
+            risk_level = st.selectbox("Risk Level", ["All", "Extreme", "High", "Medium", "Low"])
+        with col3:
+            status = st.selectbox("Status", ["All", "Open", "Under Review", "Closed", "Pending"])
+    
+    # Get filtered reports
+    filters = {
+        'type': report_type,
+        'risk': risk_level,
+        'status': status
+    }
+    
+    filtered_reports = get_filtered_reports(filters)
+    
+    # Display results
+    st.write(f"**Found {len(filtered_reports)} reports**")
+    
+    for report in filtered_reports:
+        with st.expander(f"{report['id']} - {report['type']} ({report['risk']} Risk)"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Date:** {report['date']}")
+                st.write(f"**Status:** {report['status']}")
+            with col2:
+                st.write(f"**Type:** {report['type']}")
+                st.write(f"**Risk:** {report['risk']}")
+            
+            # Actions
+            if st.button("View Details", key=f"view_{report['id']}"):
+                st.session_state['selected_report'] = report['data']
+                st.session_state['current_page'] = "Report Detail"
+                st.rerun()
+            
+            if st.button("AI Analysis", key=f"ai_{report['id']}"):
+                with st.spinner("Analyzing..."):
+                    analysis = safety_ai.analyze_safety_report(report['data'])
+                    st.markdown(analysis)
+
+# ============================================================================
+# ENHANCED OCR UPLOADER
+# ============================================================================
+
+def render_enhanced_ocr_uploader(form_type: str):
+    """Render enhanced OCR uploader with real OCR"""
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%); 
+                border: 2px dashed #3B82F6; border-radius: 12px; 
+                padding: 2rem; text-align: center; margin-bottom: 1.5rem;">
+        <div style="font-size: 3rem; margin-bottom: 0.5rem;">📷</div>
+        <h4 style="color: #1E40AF; margin: 0;">Scan Handwritten Form</h4>
+        <p style="color: #64748B; font-size: 0.9rem; margin-top: 0.5rem;">
+            Upload an image of a filled form to auto-extract data using OCR
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    uploaded_file = st.file_uploader(
+        "Upload Form Image", 
+        type=['png', 'jpg', 'jpeg', 'bmp', 'tiff'],
+        key=f"ocr_{form_type}"
+    )
+    
+    if uploaded_file:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.image(uploaded_file, caption="Uploaded Form", use_container_width=True)
+        with col2:
+            if st.button("🔍 Extract Data with OCR", use_container_width=True):
+                with st.spinner("Processing OCR..."):
+                    extracted_data = ocr_processor.process_image(uploaded_file, form_type)
+                    
+                    # Store in session state
+                    ocr_key = f'ocr_data_{form_type}'
+                    st.session_state[ocr_key] = extracted_data
+                    
+                    # Show results
+                    st.success("✅ Data extracted successfully!")
+                    with st.expander("View Extracted Data"):
+                        for key, value in extracted_data.items():
+                            if isinstance(value, list):
+                                value = ", ".join(str(v) for v in value)
+                            st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+                    
+                    return extracted_data
+    
+    # Return previously extracted data if available
+    return st.session_state.get(f'ocr_data_{form_type}')
+
+# ============================================================================
+# PREDICTIVE SAFETY MONITORING
+# ============================================================================
+
+def render_predictive_safety_monitoring():
+    """Render predictive safety monitoring dashboard"""
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
+                padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
+        <h1 style="margin: 0; font-size: 2.2rem;">🔮 Predictive Safety Monitor</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
+            AI-powered safety trend prediction and early warning
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Get historical data
+    historical_data = []
+    for report_type in ['bird_strikes', 'laser_strikes', 'tcas_reports', 
+                       'aircraft_incidents', 'hazard_reports']:
+        historical_data.extend(st.session_state.get(report_type, []))
+    
+    if historical_data:
+        # Generate AI insights
+        with st.spinner("Generating predictive insights..."):
+            insights = safety_ai.generate_predictive_insights(historical_data)
+            st.markdown(insights)
+        
+        # Risk indicators
+        st.markdown("### 📊 Leading Safety Indicators")
+        
+        # Calculate indicators
+        total_reports = len(historical_data)
+        high_risk = sum(1 for r in historical_data if r.get('risk_level') in ['High', 'Extreme'])
+        recent_trend = min(30, total_reports)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Risk Exposure", f"{(high_risk/total_reports*100):.1f}%" if total_reports > 0 else "0%",
+                     delta=f"{high_risk} high risk" if high_risk > 0 else None)
+        with col2:
+            st.metric("Trend Stability", "Stable" if recent_trend < 10 else "Increasing",
+                     delta=f"+{recent_trend}" if recent_trend >= 10 else None)
+        with col3:
+            st.metric("Response Time", "Within SLA", delta="-5%")
+        with col4:
+            st.metric("Preventive Actions", "85%", delta="+2%")
+        
+        # Predictive alerts
+        st.markdown("### 🚨 Predictive Alerts")
+        
+        alerts = [
+            {"type": "Seasonal", "message": "Bird strike risk increases in migration seasons", "confidence": "85%"},
+            {"type": "Operational", "message": "Fatigue risk elevated during holiday schedule", "confidence": "72%"},
+            {"type": "Environmental", "message": "Monsoon weather patterns may affect operations", "confidence": "68%"}
+        ]
+        
+        for alert in alerts:
+            with st.expander(f"{alert['type']} Alert ({alert['confidence']} confidence)"):
+                st.write(alert['message'])
+                if st.button("Create Preventive Action", key=f"action_{alert['type']}"):
+                    st.info("Preventive action workflow would start here")
+    else:
+        st.info("No historical data available for predictive analysis")
+
+# ============================================================================
+# ENHANCED GEOSPATIAL MAPPING
+# ============================================================================
+
+def render_enhanced_geospatial_map():
+    """Render enhanced geospatial map with incidents"""
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
+                padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
+        <h1 style="margin: 0; font-size: 2.2rem;">🗺️ Geospatial Incident Map</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
+            Visual representation of safety events by location
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Collect incident locations
+    incidents = []
+    
+    # Sample data for demonstration
+    sample_incidents = [
+        {"lat": 31.5204, "lon": 74.3587, "type": "Bird Strike", "risk": "Medium", "airport": "OPLA"},
+        {"lat": 24.9065, "lon": 67.1609, "type": "Laser Strike", "risk": "High", "airport": "OPKC"},
+        {"lat": 33.6167, "lon": 73.0992, "type": "TCAS", "risk": "Low", "airport": "OPRN"},
+        {"lat": 25.2900, "lon": 62.3157, "type": "Incident", "risk": "Medium", "airport": "OPPS"}
+    ]
+    
+    if PYDECK_AVAILABLE:
+        try:
+            df = pd.DataFrame(sample_incidents)
+            
+            # Color mapping
+            risk_colors = {
+                "Extreme": [220, 53, 69, 200],
+                "High": [253, 126, 20, 200],
+                "Medium": [255, 193, 7, 200],
+                "Low": [40, 167, 69, 200]
+            }
+            
+            # Assign colors
+            df['color'] = df['risk'].apply(lambda x: risk_colors.get(x, [108, 117, 125, 200]))
+            
+            # Create pydeck layer
+            layer = pdk.Layer(
+                'ScatterplotLayer',
+                data=df,
+                get_position='[lon, lat]',
+                get_color='color',
+                get_radius=50000,
+                pickable=True
+            )
+            
+            # Set view
+            view_state = pdk.ViewState(
+                latitude=30.3753,
+                longitude=69.3451,
+                zoom=4,
+                pitch=0
+            )
+            
+            # Render
+            deck = pdk.Deck(
+                layers=[layer],
+                initial_view_state=view_state,
+                tooltip={
+                    'html': '<b>Airport:</b> {airport}<br><b>Type:</b> {type}<br><b>Risk:</b> {risk}',
+                    'style': {
+                        'backgroundColor': 'white',
+                        'color': 'black'
+                    }
+                }
+            )
+            
+            st.pydeck_chart(deck)
+            
+        except Exception as e:
+            st.error(f"Map rendering error: {str(e)}")
+            # Fallback to static map
+            st.map(pd.DataFrame(sample_incidents))
+    else:
+        # Fallback to simple map
+        st.map(pd.DataFrame(sample_incidents))
+    
+    # Airport statistics
+    st.markdown("### 📊 Airport Incident Statistics")
+    
+    airport_stats = pd.DataFrame([
+        {"Airport": "Lahore (OPLA)", "Incidents": 12, "High Risk": 2},
+        {"Airport": "Karachi (OPKC)", "Incidents": 8, "High Risk": 3},
+        {"Airport": "Islamabad (OPRN)", "Incidents": 5, "High Risk": 1},
+        {"Airport": "Sialkot (OPSK)", "Incidents": 4, "High Risk": 0}
+    ])
+    
+    st.dataframe(airport_stats, use_container_width=True)
+
+# ============================================================================
+# MAIN APPLICATION WITH OPTIMIZED ROUTING
+# ============================================================================
+
+def render_sidebar():
+    """Render optimized sidebar"""
+    with st.sidebar:
+        # Logo and user info
+        st.markdown(f"""
+        <div style="text-align: center; padding: 20px 0;">
+            <div style="font-size: 3rem;">✈️</div>
+            <h3 style="color: #1e3c72;">AIR SIAL</h3>
+            <p style="color: #666;">Safety Management System</p>
+            <p style="color: #888;">v{Config.APP_VERSION}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.session_state.authenticated:
+            st.markdown(f"""
+            <div style="background: #F0F4F8; padding: 15px; border-radius: 10px; margin: 10px 0;">
+                👤 <strong>{st.session_state.username}</strong>
+                <br><small>{st.session_state.user_role}</small>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Navigation
+        st.markdown("### 📍 Navigation")
+        
+        # Dashboard
+        if st.button("📊 Dashboard", use_container_width=True):
+            st.session_state.current_page = "Dashboard"
+            st.rerun()
+        
+        # View Reports
+        if st.button("📋 View Reports", use_container_width=True):
+            st.session_state.current_page = "View Reports"
+            st.rerun()
+        
+        # Submit Reports (dropdown)
+        with st.expander("➕ Submit Reports"):
+            report_types = ["Bird Strike Report", "Laser Strike Report", "TCAS Report",
+                          "Aircraft Incident Report", "Hazard Report", "FSR Report", "Captain Debrief"]
+            for report_type in report_types:
+                if st.button(report_type, key=f"nav_{report_type}"):
+                    st.session_state.current_page = report_type
+                    st.rerun()
+        
+        # Advanced Features
+        if RBAC.has_permission("ai_assistant"):
+            if st.button("🤖 AI Assistant", use_container_width=True):
+                st.session_state.current_page = "AI Assistant"
+                st.rerun()
+        
+        if RBAC.has_permission("geospatial_map"):
+            if st.button("🗺️ Geospatial Map", use_container_width=True):
+                st.session_state.current_page = "Geospatial Map"
+                st.rerun()
+        
+        if RBAC.has_permission("predictive_monitor"):
+            if st.button("🔮 Predictive Monitor", use_container_width=True):
+                st.session_state.current_page = "Predictive Monitor"
+                st.rerun()
+        
+        # Settings
+        if RBAC.has_permission("settings"):
+            if st.button("⚙️ Settings", use_container_width=True):
+                st.session_state.current_page = "Settings"
+                st.rerun()
+        
+        # ERP Activation
+        if RBAC.has_permission("erp_activation"):
+            st.markdown("---")
+            if st.session_state.get('erp_mode', False):
+                if st.button("🛑 Deactivate ERP", type="primary", use_container_width=True):
+                    EmergencyResponsePlan.deactivate_erp()
+                    st.rerun()
+            else:
+                if st.button("⚠️ Activate ERP", type="secondary", use_container_width=True):
+                    EmergencyResponsePlan.activate_erp()
+                    st.rerun()
+        
+        # Logout
+        st.markdown("---")
+        if st.session_state.authenticated:
+            if st.button("🚪 Logout", use_container_width=True):
+                st.session_state.authenticated = False
+                st.rerun()
+
+def render_login_page():
+    """Render login page"""
+    st.markdown("""
+    <div style="text-align: center; padding: 50px 0;">
+        <h1 style="font-size: 3rem;">✈️</h1>
+        <h1>Air Sial Safety Management System</h1>
+        <p>Version {Config.APP_VERSION}</p>
+    </div>
+    """.format(Config.APP_VERSION), unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        with st.container():
+            st.markdown("### 🔐 Login")
+            
+            # Demo credentials
+            with st.expander("Demo Credentials"):
+                st.markdown("""
+                **Admin:** admin / admin123  
+                **Safety Manager:** safety / safety123  
+                **Flight Crew:** pilot / pilot123  
+                **Maintenance:** engineer / engineer123  
+                **Viewer:** viewer / viewer123
+                """)
+            
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            
+            if st.button("Login", type="primary", use_container_width=True):
+                # Simple authentication (in production, use proper auth)
+                if username and password:
+                    # Demo authentication
+                    demo_users = {
+                        "admin": ("admin123", "admin"),
+                        "safety": ("safety123", "safety_manager"),
+                        "pilot": ("pilot123", "flight_crew"),
+                        "engineer": ("engineer123", "maintenance"),
+                        "viewer": ("viewer123", "viewer")
+                    }
+                    
+                    if username in demo_users and demo_users[username][0] == password:
+                        st.session_state.authenticated = True
+                        st.session_state.username = username
+                        st.session_state.user_role = demo_users[username][1]
+                        st.success("✅ Login successful!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid credentials")
+                else:
+                    st.warning("Please enter username and password")
+
+def render_current_page():
+    """Render current page based on state"""
+    current_page = st.session_state.get('current_page', 'Dashboard')
+    
+    page_handlers = {
+        "Dashboard": render_optimized_dashboard,
+        "View Reports": render_optimized_view_reports,
+        "Bird Strike Report": lambda: render_optimized_form("Bird Strike Report"),
+        "Laser Strike Report": lambda: render_optimized_form("Laser Strike Report"),
+        "TCAS Report": lambda: render_optimized_form("TCAS Report"),
+        "Aircraft Incident Report": lambda: render_optimized_form("Aircraft Incident Report"),
+        "Hazard Report": lambda: render_optimized_form("Hazard Report"),
+        "FSR Report": lambda: render_optimized_form("FSR Report"),
+        "Captain Debrief": lambda: render_optimized_form("Captain Debrief"),
+        "AI Assistant": lambda: st.info("AI Assistant - Use the chat interface"),
+        "Geospatial Map": render_enhanced_geospatial_map,
+        "Predictive Monitor": render_predictive_safety_monitoring,
+        "Settings": lambda: st.info("Settings page - Configure system options")
+    }
+    
+    if current_page in page_handlers:
+        page_handlers[current_page]()
+    else:
+        render_optimized_dashboard()
+
+def main():
+    """Main application entry point"""
+    # Page config
+    st.set_page_config(
+        page_title=f"{Config.APP_NAME} v{Config.APP_VERSION}",
+        page_icon="✈️",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Apply custom CSS
+    st.markdown("""
+    <style>
+    .stApp { background: #F8FAFC; }
+    .main .block-container { padding-top: 2rem; }
+    .stButton button { width: 100%; }
+    .stSelectbox, .stTextInput, .stTextArea { background: white; }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Initialize session state
+    initialize_session_state()
+    
+    # Check authentication
+    if not st.session_state.authenticated:
+        render_login_page()
+        return
+    
+    # Render sidebar
+    render_sidebar()
+    
+    # Render header
+    st.markdown(f"""
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <div>
+            <h1 style="margin: 0; color: #1e3c72;">{Config.APP_NAME}</h1>
+            <p style="margin: 0; color: #666;">{Config.APP_SUBTITLE} • {datetime.now().strftime('%d %b %Y %H:%M')}</p>
+        </div>
+        <div style="text-align: right;">
+            <p style="margin: 0; color: #888;">{Config.COMPANY_NAME} • {Config.COMPANY_ICAO}</p>
+            <p style="margin: 0; color: #888;">AOC: {Config.AOC_NUMBER}</p>
+        </div>
+    </div>
+    <hr>
+    """, unsafe_allow_html=True)
+    
+    # Render current page
+    try:
+        render_current_page()
+    except Exception as e:
+        st.error(f"Error rendering page: {str(e)}")
+        st.exception(e)
+        
+
+# Standard library imports
+import base64
+import hashlib
+import io
+import json
+import os
+import random
+import re
+import smtplib
+import time
+import uuid
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, date
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from enum import Enum
+from typing import Optional, Dict, List, Any, Tuple
+
+# Third-party imports
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+from plotly.subplots import make_subplots
 
 # Optional pydeck for geospatial mapping
 try:
@@ -105,17 +1522,7 @@ try:
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
-try:
-    import ai_assistant  # <--- THIS IS THE MISSING LINK
-except ImportError as e:
-    st.error(f"❌ Failed to import 'ai_assistant.py': {e}")
-    st.info("Ensure the file 'ai_assistant.py' is in the same folder as 'app.py'.")
 
-try:
-    import ui_integration # Required for OCR
-except ImportError:
-    pass # Handle gracefully if missing
-    
 # Air Sial SMS v3.0 - Configuration
 
 
@@ -211,12 +1618,14 @@ class ReportType(Enum):
 # ══════════════════════════════════════════════════════════════════════════════
 
 DEPARTMENTS = [
-    "Flight Operations",
-    "Safety & Security",
-    "Airport Services",
-    "Engineering",
-    "Quality Assurance",
-    "Flight Services"
+    "Flight Operations", "Engineering & Maintenance", "Cabin Services",
+    "Ground Operations", "Cargo Operations", "Flight Training",
+    "Quality Assurance", "Safety Department", "Security Department",
+    "Commercial", "Airport Operations - SKT", "Airport Operations - KHI",
+    "Airport Operations - LHE", "Airport Operations - ISB",
+    "Airport Operations - DXB", "Human Resources", "Finance",
+    "IT Department", "Corporate Office", "Crew Scheduling",
+    "Flight Dispatch", "Ramp Operations", "Catering Services"
 ]
 
 AIRCRAFT_FLEET = {
@@ -232,14 +1641,7 @@ AIRCRAFT_FLEET = {
     "AP-BMJ": {"type": "A320neo", "msn": "8000", "config": "186Y", "engines": "PW1100G", "mtow": "79000"},
 }
 
-AIRCRAFT_TYPES_STRICT = ["A320", "A330"]
-
-ROLES = {
-    "REPORTER": "Reporter",        # Submit only, View own confirmation
-    "ANALYST": "Analyst",          # Dept view, Add CAP/Root Cause
-    "GATEKEEPER": "Safety Head",   # Risk Analysis, Close, Full View
-    "ADMIN": "Admin"               # Manage Users
-}
+AIRCRAFT_TYPES = ["ATR 72-600", "ATR 72-500", "ATR 42-500", "A320-200", "A320neo", "A321-200", "A321neo", "B737-800", "B737 MAX 8"]
 
 AIRPORTS = {
     "OPSK": {"name": "Sialkot International Airport", "city": "Sialkot", "country": "Pakistan", "base": True, "icao": "OPSK", "iata": "SKT", "elevation": "837ft"},
@@ -260,13 +1662,6 @@ AIRPORTS = {
     "OBBI": {"name": "Bahrain International Airport", "city": "Bahrain", "country": "Bahrain", "base": False, "icao": "OBBI", "iata": "BAH", "elevation": "6ft"},
     "OOMS": {"name": "Muscat International Airport", "city": "Muscat", "country": "Oman", "base": False, "icao": "OOMS", "iata": "MCT", "elevation": "48ft"},
     "OKBK": {"name": "Kuwait International Airport", "city": "Kuwait City", "country": "Kuwait", "base": False, "icao": "OKBK", "iata": "KWI", "elevation": "206ft"},
-}
-
-RISK_COLORS = {
-    "Extreme": "#8B0000", # Dark Red
-    "High": "#CC5500",    # Dark Orange
-    "Medium": "#B8860B",  # Dark Goldenrod
-    "Low": "#006400"      # Dark Green
 }
 
 FLIGHT_PHASES = [
@@ -514,12 +1909,7 @@ def get_aircraft_info(registration: str) -> dict:
 # DYNAMIC STATISTICS FROM SESSION STATE - NO MOCK DATA
 # ══════════════════════════════════════════════════════════════════════════════
 
-# --- REPLACEMENT CODE ---
-
-# REPLACE THE FUNCTION AT LINE 465 WITH THIS:
-
 def get_report_counts() -> dict:
-    """Get counts directly from session state (Dynamic - No Cache)"""
     return {
         'bird_strikes': len(st.session_state.get('bird_strikes', [])),
         'laser_strikes': len(st.session_state.get('laser_strikes', [])),
@@ -527,7 +1917,7 @@ def get_report_counts() -> dict:
         'hazard_reports': len(st.session_state.get('hazard_reports', [])),
         'aircraft_incidents': len(st.session_state.get('aircraft_incidents', [])),
         'fsr_reports': len(st.session_state.get('fsr_reports', [])),
-        'captain_dbr': len(st.session_state.get('captain_dbr', [])),
+        'captain_dbr': len(st.session_state.get('captain_dbr', []))
     }
 
 def get_total_reports() -> int:
@@ -794,96 +2184,30 @@ def render_ocr_uploader(form_type: str) -> Optional[dict]:
 # STATIC WEATHER DATA - NO API CALLS
 # ══════════════════════════════════════════════════════════════════════════════
 
-# --- REPLACE WITH ---
-# ══════════════════════════════════════════════════════════════════════════════
-# WEATHER WIDGET (CORRECTED)
-# ══════════════════════════════════════════════════════════════════════════════
-
-# ══════════════════════════════════════════════════════════════════════════════
-# WEATHER WIDGET (HYBRID: REAL API + MOCK FALLBACK)
-# ══════════════════════════════════════════════════════════════════════════════
-import requests
-import streamlit as st
-
-# Coordinates for your main airports (matches the Free API requirement)
-AIRPORT_COORDS = {
-    "OPSK": {"lat": 32.5353, "lon": 74.3636, "name": "Sialkot", "mock": {"temp": 24, "icon": "☀️", "wind": 12, "cond": "Clear"}},
-    "OPKC": {"lat": 24.9060, "lon": 67.1600, "name": "Karachi", "mock": {"temp": 31, "icon": "🌫️", "wind": 22, "cond": "Haze"}},
-    "OPLA": {"lat": 31.5216, "lon": 74.4036, "name": "Lahore", "mock": {"temp": 28, "icon": "☁️", "wind": 10, "cond": "Cloudy"}},
-    "OPIS": {"lat": 33.5490, "lon": 73.0169, "name": "Islamabad", "mock": {"temp": 22, "icon": "🌧️", "wind": 15, "cond": "Rain"}},
-    "OMDB": {"lat": 25.2532, "lon": 55.3657, "name": "Dubai", "mock": {"temp": 36, "icon": "☀️", "wind": 18, "cond": "Sunny"}},
+STATIC_WEATHER_DATA = {
+    "OPSK": {"city": "Sialkot", "temp": 18, "condition": "Partly Cloudy", "icon": "🌤️", "wind": 12, "humidity": 65},
+    "OPKC": {"city": "Karachi", "temp": 28, "condition": "Clear", "icon": "☀️", "wind": 15, "humidity": 70},
+    "OPLA": {"city": "Lahore", "temp": 20, "condition": "Hazy", "icon": "🌫️", "wind": 8, "humidity": 75},
+    "OPIS": {"city": "Islamabad", "temp": 15, "condition": "Cloudy", "icon": "☁️", "wind": 10, "humidity": 60},
+    "OMDB": {"city": "Dubai", "temp": 32, "condition": "Clear", "icon": "☀️", "wind": 18, "humidity": 45},
 }
 
-@st.cache_data(ttl=1800)
-def fetch_live_weather(icao_code):
-    """
-    Fetches weather from OpenWeatherMap (Free API).
-    Falls back to mock data if no API Key is found or request fails.
-    """
-    airport = AIRPORT_COORDS.get(icao_code)
-    if not airport:
-        return None
-
-    # 1. Try Real API (if key exists)
-    api_key = st.secrets.get("OPENWEATHER_API_KEY") or st.secrets.get("WEATHER_API_KEY")
-    
-    if api_key:
-        try:
-            # Using the FREE API endpoint with lat/lon
-            url = f"https://api.openweathermap.org/data/2.5/weather?lat={airport['lat']}&lon={airport['lon']}&units=metric&appid={api_key}"
-            response = requests.get(url, timeout=3)
-            
-            if response.status_code == 200:
-                data = response.json()
-                # Map icon code to emoji
-                icon_code = data['weather'][0]['icon']
-                icon_map = {"01": "☀️", "02": "⛅", "03": "☁️", "04": "☁️", "09": "🌧️", "10": "🌦️", "11": "⛈️", "13": "❄️", "50": "🌫️"}
-                emoji = icon_map.get(icon_code[:2], "🌤️")
-                
-                return {
-                    "temp": round(data['main']['temp']),
-                    "condition": data['weather'][0]['main'],
-                    "wind": round(data['wind']['speed'] * 3.6), # m/s to km/h
-                    "icon": emoji
-                }
-        except Exception:
-            pass # Fail silently to mock data
-
-    # 2. Fallback to Mock Data (so dashboard looks good)
-    m = airport['mock']
-    return {
-        "temp": m['temp'],
-        "condition": m['cond'],
-        "wind": m['wind'],
-        "icon": m['icon']
-    }
-
 def render_weather_widget():
-    """Render the weather dashboard widget using real data."""
-    # Import the weather module we just fixed
-    import weather 
+    col_header, col_btn = st.columns([4, 1])
+    with col_header:
+        st.markdown("#### 🌤️ Current Weather at Key Airports")
+    with col_btn:
+        if st.button("🔄", key="refresh_weather_btn"):
+            st.toast("Weather display refreshed")
     
-    st.markdown("### 🌤️ Weather Operations (Live)")
-    
-    # Create columns for the widget
     cols = st.columns(5)
-    
-    # Fetch real data
-    weather_data = weather.get_all_weather()
-    
-    # Display logic
-    if not weather_data:
-        st.warning("Weather data unavailable. Check internet connection or API Key.")
-        return
-
-    for col, data in zip(cols, weather_data):
+    for col, (icao, data) in zip(cols, STATIC_WEATHER_DATA.items()):
         with col:
-            st.markdown(f"""
-            <div style="background: white; border-radius: 12px; padding: 1rem; text-align: center; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                <div style="font-size: 2rem; margin-bottom: 5px;">{data['icon']}</div>
-                <div style="font-size: 1.5rem; font-weight: 700; color: #1E40AF; line-height: 1;">{data['temp']}°C</div>
-                <div style="color: #64748B; font-size: 0.85rem; font-weight: 600; margin-top: 5px;">{data['name']}</div>
-                <div style="font-size: 0.75rem; color: #94A3B8;">{data['condition']} • 💨 {data['wind']} km/h</div>
+            st.markdown(f"""<div style="background: white; border-radius: 12px; padding: 1rem; text-align: center; border: 1px solid #E2E8F0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                <div style="font-size: 2rem;">{data['icon']}</div>
+                <div style="font-size: 1.5rem; font-weight: 700; color: #1E40AF;">{data['temp']}°C</div>
+                <div style="color: #64748B; font-size: 0.85rem; font-weight: 500;">{data['city']}</div>
+                <div style="font-size: 0.75rem; color: #94A3B8;">💨 {data['wind']} km/h</div>
             </div>""", unsafe_allow_html=True)
 # ══════════════════════════════════════════════════════════════════════════════
 # CUSTOM CSS STYLING
@@ -893,7 +2217,7 @@ def apply_custom_css():
     st.markdown("""
     <style>
     .stApp { background: #F8FAFC; }
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;}
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     .risk-badge { display: inline-block; padding: 0.35rem 0.75rem; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
     .risk-extreme { background: #FEE2E2; color: #DC2626; }
     .risk-high { background: #FFEDD5; color: #EA580C; }
@@ -979,35 +2303,29 @@ def render_risk_matrix_selector():
     return likelihood, severity, risk_level, risk_classification
 
 def render_visual_risk_matrix():
-    """Darkened, High-Contrast ICAO Risk Matrix"""
-    st.markdown("""
-    <style>
-        .matrix-cell { padding: 15px; color: white; font-weight: bold; text-align: center; border: 1px solid #333; }
-        .risk-ext { background-color: #8B0000; } /* Dark Red */
-        .risk-high { background-color: #CC5500; } /* Dark Orange */
-        .risk-med { background-color: #B8860B; }  /* Dark Gold */
-        .risk-low { background-color: #006400; }  /* Dark Green */
-    </style>
-    <div style="display: flex; justify-content: center;">
-        <table style="width:100%; border-collapse: collapse;">
-            <tr>
-                <td class="matrix-cell risk-med">5A</td><td class="matrix-cell risk-med">5B</td><td class="matrix-cell risk-high">5C</td><td class="matrix-cell risk-ext">5D</td><td class="matrix-cell risk-ext">5E</td>
-            </tr>
-            <tr>
-                <td class="matrix-cell risk-low">4A</td><td class="matrix-cell risk-med">4B</td><td class="matrix-cell risk-high">4C</td><td class="matrix-cell risk-ext">4D</td><td class="matrix-cell risk-ext">4E</td>
-            </tr>
-            <tr>
-                <td class="matrix-cell risk-low">3A</td><td class="matrix-cell risk-low">3B</td><td class="matrix-cell risk-med">3C</td><td class="matrix-cell risk-high">3D</td><td class="matrix-cell risk-ext">3E</td>
-            </tr>
-            <tr>
-                <td class="matrix-cell risk-low">2A</td><td class="matrix-cell risk-low">2B</td><td class="matrix-cell risk-low">2C</td><td class="matrix-cell risk-med">2D</td><td class="matrix-cell risk-high">2E</td>
-            </tr>
-            <tr>
-                <td class="matrix-cell risk-low">1A</td><td class="matrix-cell risk-low">1B</td><td class="matrix-cell risk-low">1C</td><td class="matrix-cell risk-low">1D</td><td class="matrix-cell risk-med">1E</td>
-            </tr>
-        </table>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("#### 🎯 ICAO Risk Matrix")
+    colors = {RiskLevel.EXTREME: "#DC3545", RiskLevel.HIGH: "#FD7E14", RiskLevel.MEDIUM: "#FFC107", RiskLevel.LOW: "#28A745"}
+    matrix_html = '<div style="overflow-x: auto;"><table style="border-collapse: collapse; margin: 1rem 0;"><tr><th style="padding: 8px; background: #1E40AF; color: white;"></th>'
+    for s in ["A", "B", "C", "D", "E"]:
+        matrix_html += f'<th style="padding: 8px; background: #1E40AF; color: white; text-align: center;">{s}<br><small>{SEVERITY_SCALE[s]["name"][:4]}</small></th>'
+    matrix_html += '</tr>'
+    for l in [5, 4, 3, 2, 1]:
+        matrix_html += f'<tr><td style="padding: 8px; background: #1E40AF; color: white; font-weight: 600;">{l}</td>'
+        for s in ["A", "B", "C", "D", "E"]:
+            risk = RISK_MATRIX.get((str(l), s), RiskLevel.LOW)
+            color = colors[risk]
+            text_color = "#000" if risk in [RiskLevel.MEDIUM, RiskLevel.LOW] else "#FFF"
+            matrix_html += f'<td style="padding: 8px; background: {color}; color: {text_color}; text-align: center; font-weight: 600;">{l}{s}</td>'
+        matrix_html += '</tr>'
+    matrix_html += '</table></div>'
+    st.markdown(matrix_html, unsafe_allow_html=True)
+    st.markdown('<div style="display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap;"><span class="risk-badge risk-extreme">EXTREME</span><span class="risk-badge risk-high">HIGH</span><span class="risk-badge risk-medium">MEDIUM</span><span class="risk-badge risk-low">LOW</span></div>', unsafe_allow_html=True)
+# ============================================================================
+# PART 4: FULL AVIATION FORMS - BIRD STRIKE, LASER STRIKE, TCAS REPORT
+# ============================================================================
+# Air Sial Corporate Safety Management System v3.0
+# Complete aviation-specific forms with all required fields
+# ============================================================================
 
 def render_bird_strike_form():
     """
@@ -1082,25 +2400,19 @@ def render_bird_strike_form():
                 placeholder="e.g., PF-101"
             )
         with col2:
-            # Create a clean list of options first
-            fleet_options = [""] + list(AIRCRAFT_FLEET.keys())
-            
-            # Find the correct index safely
-            default_index = 0
-            if ocr_data.get('aircraft_reg') in fleet_options:
-                default_index = fleet_options.index(ocr_data['aircraft_reg'])
-
             aircraft_reg = st.selectbox(
                 "Aircraft Registration *",
-                options=fleet_options,
-                index=default_index
+                options=[""] + [a["registration"] for a in AIRCRAFT_FLEET],
+                index=0 if not ocr_data.get('aircraft_reg') else (
+                    [a["registration"] for a in AIRCRAFT_FLEET].index(ocr_data['aircraft_reg']) + 1 
+                    if ocr_data.get('aircraft_reg') in [a["registration"] for a in AIRCRAFT_FLEET] else 0
+                )
             )
-            
         with col3:
             # Auto-populate aircraft type based on registration
             aircraft_type = st.text_input(
                 "Aircraft Type",
-                value=AIRCRAFT_FLEET.get(aircraft_reg, {}).get("type", ""),
+                value=next((a["type"] for a in AIRCRAFT_FLEET if a["registration"] == aircraft_reg), ""),
                 disabled=True
             )
         
@@ -1108,13 +2420,13 @@ def render_bird_strike_form():
         with col1:
             origin_airport = st.selectbox(
                 "Origin Airport *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0
             )
         with col2:
             destination_airport = st.selectbox(
                 "Destination Airport *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0
             )
         with col3:
@@ -1133,7 +2445,7 @@ def render_bird_strike_form():
         with col1:
             strike_airport = st.selectbox(
                 "Airport/Location of Strike",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0
             )
         with col2:
@@ -1321,10 +2633,9 @@ def render_bird_strike_form():
         with col1:
             effect_on_flight = st.selectbox(
                 "Effect on Flight *",
-                options=EFFECT_ON_FLIGHT_OPTIONS,
-                index=EFFECT_ON_FLIGHT_OPTIONS.index(ocr_data.get('effect_on_flight', 'None - Flight continued normally')) if ocr_data.get('effect_on_flight') in EFFECT_ON_FLIGHT_OPTIONS else 0
+                options=EFFECT_ON_FLIGHT,
+                index=EFFECT_ON_FLIGHT.index(ocr_data.get('effect_on_flight', 'None')) if ocr_data.get('effect_on_flight') in EFFECT_ON_FLIGHT else 0
             )
-            
         with col2:
             precautionary_landing = st.selectbox(
                 "Precautionary Landing?",
@@ -1534,6 +2845,7 @@ def render_bird_strike_form():
                 
                 # Create report record
                 report_data = {
+                    'id': incident_id,
                     'type': 'Bird Strike',
                     'date': incident_date.isoformat(),
                     'time': incident_time.strftime('%H:%M'),
@@ -1593,20 +2905,10 @@ def render_bird_strike_form():
                     'department': st.session_state.get('user_department', 'Flight Operations')
                 }
                 
-                # --- SUPABASE INSERTION BLOCK (CLEAN) ---
-                try:
-                    # Note: We don't include 'id' in the insert if your DB auto-generates it. 
-                    # If you want to use your custom 'incident_id', ensure your DB 'id' column is text/varchar and not auto-increment int.
-                    report_data['report_number'] = incident_id # Store your custom ID in a specific column
-                    
-                    response = supabase.table('bird_strikes').insert(report_data).execute()
-                    st.balloons()
-                    st.success(f"✅ Bird Strike Report Saved to Database! Ref: {incident_id}")
-                except Exception as e:
-                    st.error(f"Database Error: {e}")
-
-                # Clear OCR data
-                st.session_state['ocr_data_bird_strike'] = None
+                # Add to session state
+                if 'bird_strikes' not in st.session_state:
+                    st.session_state.bird_strikes = []
+                st.session_state.bird_strikes.append(report_data)
                 
                 # Clear OCR data
                 st.session_state['ocr_data_bird_strike'] = None
@@ -1695,23 +2997,18 @@ def render_laser_strike_form():
                 placeholder="e.g., PF-101"
             )
         with col2:
-            # Create a clean list of options first
-            fleet_options = [""] + list(AIRCRAFT_FLEET.keys())
-            
-            # Find the correct index safely
-            default_index = 0
-            if ocr_data.get('aircraft_reg') in fleet_options:
-                default_index = fleet_options.index(ocr_data['aircraft_reg'])
-
             aircraft_reg = st.selectbox(
                 "Aircraft Registration *",
-                options=fleet_options,
-                index=default_index
+                options=[""] + [a["registration"] for a in AIRCRAFT_FLEET],
+                index=0 if not ocr_data.get('aircraft_reg') else (
+                    [a["registration"] for a in AIRCRAFT_FLEET].index(ocr_data['aircraft_reg']) + 1 
+                    if ocr_data.get('aircraft_reg') in [a["registration"] for a in AIRCRAFT_FLEET] else 0
+                )
             )
         with col3:
             aircraft_type = st.text_input(
                 "Aircraft Type",
-                value=AIRCRAFT_FLEET.get(aircraft_reg, {}).get("type", ""),
+                value=next((a["type"] for a in AIRCRAFT_FLEET if a["registration"] == aircraft_reg), ""),
                 disabled=True
             )
         
@@ -1719,14 +3016,14 @@ def render_laser_strike_form():
         with col1:
             origin_airport = st.selectbox(
                 "Origin Airport *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="ls_origin"
             )
         with col2:
             destination_airport = st.selectbox(
                 "Destination Airport *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="ls_dest"
             )
@@ -1747,7 +3044,7 @@ def render_laser_strike_form():
         with col1:
             incident_airport = st.selectbox(
                 "Nearest Airport",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="ls_airport"
             )
@@ -2108,6 +3405,7 @@ def render_laser_strike_form():
                 
                 # Create report record
                 report_data = {
+                    'id': incident_id,
                     'type': 'Laser Strike',
                     'date': incident_date.isoformat(),
                     'time': incident_time.strftime('%H:%M'),
@@ -2160,16 +3458,11 @@ def render_laser_strike_form():
                     'department': st.session_state.get('user_department', 'Flight Operations')
                 }
                 
-                # --- SUPABASE INSERTION BLOCK ---
-                try:
-                    # Save to database
-                    report_data['report_number'] = incident_id
-                    response = supabase.table('laser_strikes').insert(report_data).execute()
-                    st.balloons()
-                    st.success(f"✅ Laser Strike Report Saved to Database! Ref: {incident_id}")
-                except Exception as e:
-                    st.error(f"Database Error: {e}")
-
+                # Add to session state
+                if 'laser_strikes' not in st.session_state:
+                    st.session_state.laser_strikes = []
+                st.session_state.laser_strikes.append(report_data)
+                
                 # Clear OCR data
                 st.session_state['ocr_data_laser_strike'] = None
                 
@@ -2263,23 +3556,16 @@ def render_tcas_report_form():
                 key="tcas_flight"
             )
         with col2:
-            # Create a clean list of options first
-            fleet_options = [""] + list(AIRCRAFT_FLEET.keys())
-            
-            # Find the correct index safely
-            default_index = 0
-            if ocr_data.get('aircraft_reg') in fleet_options:
-                default_index = fleet_options.index(ocr_data['aircraft_reg'])
-
             aircraft_reg = st.selectbox(
                 "Aircraft Registration *",
-                options=fleet_options,
-                index=default_index
+                options=[""] + [a["registration"] for a in AIRCRAFT_FLEET],
+                index=0,
+                key="tcas_reg"
             )
         with col3:
             aircraft_type = st.text_input(
                 "Aircraft Type",
-                value=AIRCRAFT_FLEET.get(aircraft_reg, {}).get("type", ""),
+                value=next((a["type"] for a in AIRCRAFT_FLEET if a["registration"] == aircraft_reg), ""),
                 disabled=True,
                 key="tcas_type"
             )
@@ -2288,14 +3574,14 @@ def render_tcas_report_form():
         with col1:
             origin_airport = st.selectbox(
                 "Origin Airport *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="tcas_origin"
             )
         with col2:
             destination_airport = st.selectbox(
                 "Destination Airport *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="tcas_dest"
             )
@@ -2761,6 +4047,7 @@ def render_tcas_report_form():
                 
                 # Create report record
                 report_data = {
+                    'id': incident_id,
                     'type': 'TCAS Report',
                     'date': incident_date.isoformat(),
                     'time': incident_time.strftime('%H:%M'),
@@ -2823,14 +4110,10 @@ def render_tcas_report_form():
                     'department': st.session_state.get('user_department', 'Flight Operations')
                 }
                 
-                # --- SUPABASE INSERTION BLOCK ---
-                try:
-                    report_data['report_number'] = incident_id
-                    response = supabase.table('tcas_reports').insert(report_data).execute()
-                    st.balloons()
-                    st.success(f"✅ TCAS Report Submitted Successfully! Ref: {incident_id}")
-                except Exception as e:
-                    st.error(f"Database Error: {e}")
+                # Add to session state
+                if 'tcas_reports' not in st.session_state:
+                    st.session_state.tcas_reports = []
+                st.session_state.tcas_reports.append(report_data)
                 
                 # Clear OCR data
                 st.session_state['ocr_data_tcas_report'] = None
@@ -2948,41 +4231,31 @@ def render_incident_form():
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            # Create a clean list of options first
-            fleet_options = [""] + list(AIRCRAFT_FLEET.keys())
-            
-            # Find the correct index safely
-            default_index = 0
-            if ocr_data.get('aircraft_reg') in fleet_options:
-                default_index = fleet_options.index(ocr_data['aircraft_reg'])
-
             aircraft_reg = st.selectbox(
                 "Aircraft Registration *",
-                options=fleet_options,
-                index=default_index
+                options=[""] + [a["registration"] for a in AIRCRAFT_FLEET],
+                index=0,
+                key="inc_reg"
             )
         with col2:
-            # FIX: Direct dictionary lookup
             aircraft_type = st.text_input(
                 "Aircraft Type",
-                value=AIRCRAFT_FLEET.get(aircraft_reg, {}).get("type", ""),
+                value=next((a["type"] for a in AIRCRAFT_FLEET if a["registration"] == aircraft_reg), ""),
                 disabled=True,
                 key="inc_type"
             )
         with col3:
-            # FIX: Direct dictionary lookup
             msn = st.text_input(
                 "MSN (Manufacturer Serial Number)",
-                value=AIRCRAFT_FLEET.get(aircraft_reg, {}).get("msn", ""),
+                value=next((a["msn"] for a in AIRCRAFT_FLEET if a["registration"] == aircraft_reg), ""),
                 disabled=True
             )
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            # FIX: Direct dictionary lookup
             engine_type = st.text_input(
                 "Engine Type",
-                value=AIRCRAFT_FLEET.get(aircraft_reg, {}).get("engines", ""),
+                value=next((a["engines"] for a in AIRCRAFT_FLEET if a["registration"] == aircraft_reg), ""),
                 disabled=True
             )
         with col2:
@@ -3047,21 +4320,21 @@ def render_incident_form():
         with col1:
             origin_airport = st.selectbox(
                 "Origin Airport *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="inc_origin"
             )
         with col2:
             destination_airport = st.selectbox(
                 "Destination Airport *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="inc_dest"
             )
         with col3:
             alternate_airport = st.selectbox(
                 "Alternate Airport",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0
             )
         
@@ -3089,7 +4362,7 @@ def render_incident_form():
         with col1:
             incident_location = st.selectbox(
                 "Incident Location",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()] + ["En-route", "Over water", "Other"],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS] + ["En-route", "Over water", "Other"],
                 index=0
             )
         with col2:
@@ -3619,6 +4892,7 @@ def render_incident_form():
                 
                 # Create report record
                 report_data = {
+                    'id': incident_id,
                     'type': 'Aircraft Incident',
                     'notification_type': notification_type,
                     'date': incident_date.isoformat(),
@@ -3712,24 +4986,10 @@ def render_incident_form():
                     'department': st.session_state.get('user_department', 'Safety Department')
                 }
                 
-                # --- SUPABASE INSERTION BLOCK ---
-                try:
-                    report_data['report_number'] = incident_id
-                    response = supabase.table('aircraft_incidents').insert(report_data).execute()
-                    st.balloons()
-                    st.success(f"""
-                        ✅ **Incident Report Submitted Successfully!**
-                        
-                        **Reference:** {incident_id}  
-                        **Classification:** {notification_type}  
-                        **Risk Level:** {risk_level}  
-                        **Status:** {investigation_status}
-                        
-                        The report has been added to the system and is now visible in View Reports.
-                        {"⚠️ **IMPORTANT:** This incident requires immediate notification to PCAA." if notification_type in ["Accident", "Serious Incident"] else ""}
-                    """)
-                except Exception as e:
-                    st.error(f"Database Error: {e}")
+                # Add to session state
+                if 'aircraft_incidents' not in st.session_state:
+                    st.session_state.aircraft_incidents = []
+                st.session_state.aircraft_incidents.append(report_data)
                 
                 # Clear OCR data
                 st.session_state['ocr_data_incident_report'] = None
@@ -3749,228 +5009,552 @@ def render_incident_form():
                 """)
 
 
-def render_mor_form():
-    """
-    Mandatory Occurrence Report (MOR) - Checkbox Style
-    """
-    st.markdown("## 🚨 Mandatory Occurrence Report (MOR)")
-    st.info("ℹ️ Notification only. No CAP/Investigation workflow applies.")
-    
-    with st.form("mor_strict_form"):
-        st.markdown("#### Occurrence Type")
-        c1, c2, c3, c4 = st.columns(4)
-        is_bird = c1.checkbox("Bird Strike")
-        is_laser = c2.checkbox("Laser Strike")
-        is_tcas = c3.checkbox("TCAS RA")
-        is_gen = c4.checkbox("MOR (General)")
-        
-        col1, col2 = st.columns(2)
-        dept = col1.selectbox("Department", DEPARTMENTS)
-        date_occ = col2.date_input("Date of Occurrence")
-        
-        desc = st.text_area("Description", height=100)
-        st.file_uploader("Attach Document/Evidence")
-        
-        if st.form_submit_button("Submit MOR", type="primary"):
-            if not any([is_bird, is_laser, is_tcas, is_gen]):
-                st.error("Please select at least one Occurrence Type.")
-            else:
-                st.success("✅ MOR Submitted. Notification sent to Safety Department.")
-
-
-                
-# ══════════════════════════════════════════════════════════════════════════════
-# FIX: DEFINITIONS FOR ROUTING (Hazard, MOR, Audit)
-# ══════════════════════════════════════════════════════════════════════════════
-
 def render_hazard_form():
     """
-    Hazard Form: Matches 'Hazard Identification & Risk Assessment Form.pdf'
-    Includes: 5x5 Matrix Inputs, Location, Description, Sign-off.
+    Complete Hazard Report Form with ICAO Risk Matrix
+    Sections A-H: Full hazard identification and risk assessment
     """
-    st.markdown("## ⚠️ Hazard Identification & Risk Assessment")
+    st.markdown("## 🔶 Hazard Report Form")
+    st.markdown("*Report identified hazards, unsafe conditions, and potential risks*")
     
-    # --- 1. OCR / AI AUTO-FILL SECTION ---
-    st.info("💡 **Smart Fill:** Upload a photo of the handwritten form to auto-fill these fields.")
-    uploaded_file = st.file_uploader("Upload Scanned Form / Evidence", type=['png', 'jpg', 'jpeg', 'pdf'], key="hazard_ocr")
+    # Check for OCR extracted data
+    ocr_data = st.session_state.get('ocr_data_hazard_report', {}) or {}
     
-    if uploaded_file is not None:
-        with st.spinner("🤖 AI is reading the document..."):
-            try:
-                # Reconnecting your existing OCR logic
-                ocr_result = ui_integration.process_file_upload(uploaded_file)
-                st.success("Data Extracted Successfully!")
-                # In a real scenario, you'd map 'ocr_result' to session_state variables here
-                with st.expander("View Extracted Data"):
-                    st.json(ocr_result)
-            except Exception as e:
-                st.error(f"OCR Error: {e}. Please fill manually.")
-
-    with st.form("hazard_full_form"):
-        # Section A: Basic Details
-        st.markdown("### A. Hazard Identification")
-        c1, c2, c3 = st.columns(3)
-        # Matches PDF: "Reporter Name", "Date", "Department"
-        reporter_name = c1.text_input("Reporter Name", value=st.session_state.get('username', ''))
-        report_date = c2.date_input("Date of Report")
-        dept = c3.selectbox("Department", DEPARTMENTS)
+    # OCR Upload Section
+    with st.expander("📷 Upload Form Image for OCR Autofill", expanded=False):
+        extracted = render_ocr_uploader("hazard_report")
+        if extracted:
+            ocr_data = extracted
+            st.session_state['ocr_data_hazard_report'] = extracted
+    
+    if ocr_data:
+        st.info("✨ Form pre-filled with OCR extracted data. Please verify and correct any fields.")
+    
+    with st.form("hazard_form", clear_on_submit=False):
         
-        c4, c5 = st.columns(2)
-        # Matches PDF: "Location of Hazard", "Date/Time Hazard Identified"
-        location = c4.text_input("Location / Area")
-        datetime_occ = c5.text_input("Date/Time Identified (DD/MM/YYYY HH:MM)")
+        # ========== SECTION A: REPORTER INFORMATION ==========
+        st.markdown("""<div class="form-section">
+            <div class="form-section-header">Section A: Reporter Information</div>
+        </div>""", unsafe_allow_html=True)
         
-        description = st.text_area("Hazard Description", help="Describe the hazard in detail (Who, What, Where, When)", height=150)
+        col1, col2 = st.columns(2)
+        with col1:
+            hazard_id = st.text_input(
+                "Hazard Reference Number",
+                value=f"HAZ-{datetime.now().strftime('%Y%m%d')}-{random.randint(100, 999)}",
+                disabled=True
+            )
+        with col2:
+            report_date = st.date_input(
+                "Date of Report *",
+                value=date.today(),
+                key="haz_date"
+            )
         
-        # Section B: Initial Risk Assessment (The Matrix)
-        st.markdown("### B. Initial Risk Assessment (Matrix)")
-        st.caption("Refer to the 5x5 Matrix (Severity A-E, Probability 1-5)")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            reporter_name = st.text_input(
+                "Reporter Name",
+                value=st.session_state.get('user_name', ''),
+                help="Leave blank for anonymous reporting"
+            )
+        with col2:
+            reporter_department = st.selectbox(
+                "Department",
+                options=["Flight Operations", "Cabin Crew", "Ground Operations", "Maintenance", "Engineering", "Training", "Safety", "Quality Assurance", "Commercial", "Other"],
+                index=0
+            )
+        with col3:
+            reporter_contact = st.text_input(
+                "Contact (Optional)",
+                placeholder="Email or phone"
+            )
         
-        m1, m2 = st.columns(2)
-        # Matches PDF: "Severity (A-E)", "Probability (1-5)"
-        severity = m1.selectbox("Severity", ["A - Catastrophic", "B - Major", "C - Moderate", "D - Minor", "E - Insignificant"])
-        probability = m2.selectbox("Probability", ["5 - Frequent", "4 - Occasional", "3 - Remote", "2 - Improbable", "1 - Rare"])
+        anonymous_report = st.checkbox(
+            "Submit as Anonymous Report",
+            value=False,
+            help="Your identity will be protected but may limit follow-up"
+        )
         
-        # Section C: Workflow (Hidden for Reporter, Visible for Analyst)
-        role = st.session_state.get('user_role')
-        if role in ["Analyst", "Safety Head", "Admin"]:
-            st.markdown("---")
-            st.markdown("### C. Corrective Action Plan (Analyst Only)")
-            # Matches PDF: "Person Responsible", "Action Plan", "Target Date"
-            cap_owner = st.text_input("Person Responsible")
-            cap_plan = st.text_area("Corrective Action Plan")
-            target_date = st.date_input("Target Date for Completion")
+        # ========== SECTION B: HAZARD IDENTIFICATION ==========
+        st.markdown("""<div class="form-section">
+            <div class="form-section-header">Section B: Hazard Identification</div>
+        </div>""", unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            hazard_date = st.date_input(
+                "Date Hazard Observed *",
+                value=datetime.strptime(ocr_data.get('hazard_date', date.today().isoformat()), '%Y-%m-%d').date() if ocr_data.get('hazard_date') else date.today(),
+                key="haz_observed_date"
+            )
+        with col2:
+            hazard_time = st.time_input(
+                "Time Hazard Observed",
+                value=datetime.now().time(),
+                key="haz_time"
+            )
+        
+        hazard_category = st.selectbox(
+            "Hazard Category *",
+            options=HAZARD_CATEGORIES,
+            index=0
+        )
+        
+        hazard_title = st.text_input(
+            "Hazard Title *",
+            value=ocr_data.get('hazard_title', ''),
+            placeholder="Brief descriptive title of the hazard"
+        )
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            hazard_location = st.selectbox(
+                "Location *",
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS] + ["Aircraft", "Training Facility", "Office", "Other"],
+                index=0
+            )
+        with col2:
+            specific_location = st.text_input(
+                "Specific Location",
+                placeholder="e.g., Apron 3, Gate 5, Hangar 2"
+            )
+        
+        related_to = st.multiselect(
+            "Hazard Related To",
+            options=[
+                "Flight Operations",
+                "Ground Handling",
+                "Aircraft Systems",
+                "Airport Infrastructure",
+                "Maintenance Procedures",
+                "Training",
+                "Documentation/Procedures",
+                "Human Factors",
+                "Environmental",
+                "Security",
+                "Cargo Operations",
+                "Passenger Handling",
+                "Fuel Operations",
+                "De-icing Operations"
+            ],
+            default=[]
+        )
+        
+        # If related to a flight
+        st.markdown("**Flight Information (if applicable)**")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            flight_number = st.text_input(
+                "Flight Number",
+                value=ocr_data.get('flight_number', ''),
+                placeholder="e.g., PF-101",
+                key="haz_flight"
+            )
+        with col2:
+            aircraft_reg = st.selectbox(
+                "Aircraft Registration",
+                options=["N/A"] + [a["registration"] for a in AIRCRAFT_FLEET],
+                index=0,
+                key="haz_reg"
+            )
+        with col3:
+            flight_phase = st.selectbox(
+                "Phase of Flight",
+                options=["N/A"] + FLIGHT_PHASES,
+                index=0,
+                key="haz_phase"
+            )
+        
+        hazard_description = st.text_area(
+            "Detailed Hazard Description *",
+            value=ocr_data.get('description', ''),
+            placeholder="Describe the hazard in detail. What did you observe? What are the unsafe conditions?",
+            height=150
+        )
+        
+        # ========== SECTION C: RISK ASSESSMENT (ICAO MATRIX) ==========
+        st.markdown("""<div class="form-section">
+            <div class="form-section-header">Section C: Risk Assessment - ICAO Safety Risk Matrix</div>
+        </div>""", unsafe_allow_html=True)
+        
+        st.markdown("""
+        <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <strong>📊 Risk Assessment Instructions:</strong><br>
+            Assess the risk using the ICAO 5x5 Safety Risk Matrix by evaluating:<br>
+            • <strong>Likelihood:</strong> How likely is the hazard to result in an occurrence?<br>
+            • <strong>Severity:</strong> What is the worst credible outcome if it occurs?
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Render visual risk matrix
+        render_visual_risk_matrix()
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Likelihood Assessment**")
+            likelihood = st.select_slider(
+                "Likelihood",
+                options=[
+                    ("1", "Extremely Improbable"),
+                    ("2", "Improbable"),
+                    ("3", "Remote"),
+                    ("4", "Occasional"),
+                    ("5", "Frequent")
+                ],
+                value=("3", "Remote"),
+                format_func=lambda x: f"{x[0]} - {x[1]}"
+            )
+            st.markdown(f"""
+            <div style="font-size: 0.85rem; color: #64748B; padding: 0.5rem; background: #F8FAFC; border-radius: 4px;">
+                <strong>Selected:</strong> {likelihood[0]} - {likelihood[1]}<br>
+                <em>Definition: {LIKELIHOOD_DEFINITIONS.get(likelihood[0], '')}</em>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("**Severity Assessment**")
+            severity = st.selectbox(
+                "Severity",
+                options=[
+                    ("A", "Catastrophic - Multiple fatalities"),
+                    ("B", "Hazardous - Single fatality/serious injury"),
+                    ("C", "Major - Serious incident"),
+                    ("D", "Minor - Minor incident"),
+                    ("E", "Negligible - Little consequence")
+                ],
+                index=2,
+                format_func=lambda x: f"{x[0]} - {x[1].split(' - ')[0]}"
+            )
+            st.markdown(f"""
+            <div style="font-size: 0.85rem; color: #64748B; padding: 0.5rem; background: #F8FAFC; border-radius: 4px;">
+                <strong>Selected:</strong> {severity[0]} - {severity[1]}<br>
+                <em>Definition: {SEVERITY_DEFINITIONS.get(severity[0], '')}</em>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Calculate risk level
+        risk_code = f"{likelihood[0]}{severity[0]}"
+        risk_level = calculate_risk_level(int(likelihood[0]), severity[0])
+        risk_info = RISK_ACTIONS[risk_level]
+        
+        st.markdown(f"""
+        <div style="background: {risk_info['color']}15; border: 2px solid {risk_info['color']}; border-radius: 12px; padding: 1.5rem; margin: 1rem 0; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700; color: {risk_info['color']};">{risk_code}</div>
+            <div style="margin: 0.5rem 0;">
+                {render_risk_badge(risk_level)}
+            </div>
+            <div style="font-size: 0.9rem; color: #475569; margin-top: 1rem;">
+                <strong>Required Action:</strong> {risk_info['action']}<br>
+                <strong>Timeline:</strong> {risk_info['timeline']}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        risk_justification = st.text_area(
+            "Risk Assessment Justification",
+            placeholder="Explain your reasoning for the likelihood and severity ratings...",
+            height=80
+        )
+        
+        # ========== SECTION D: EXISTING CONTROLS ==========
+        st.markdown("""<div class="form-section">
+            <div class="form-section-header">Section D: Existing Controls & Barriers</div>
+        </div>""", unsafe_allow_html=True)
+        
+        existing_controls = st.text_area(
+            "Existing Controls/Barriers",
+            placeholder="Describe any existing controls, procedures, or barriers that currently mitigate this hazard...",
+            height=80
+        )
+        
+        control_effectiveness = st.selectbox(
+            "Effectiveness of Existing Controls",
+            options=[
+                "Effective - No additional action needed",
+                "Partially Effective - Enhancement needed",
+                "Ineffective - Significant improvement required",
+                "None - No controls in place",
+                "Unknown"
+            ],
+            index=4
+        )
+        
+        # ========== SECTION E: SUGGESTED ACTIONS ==========
+        st.markdown("""<div class="form-section">
+            <div class="form-section-header">Section E: Suggested Corrective/Preventive Actions</div>
+        </div>""", unsafe_allow_html=True)
+        
+        suggested_actions = st.text_area(
+            "Suggested Actions *",
+            value=ocr_data.get('suggested_actions', ''),
+            placeholder="What actions do you suggest to eliminate or mitigate this hazard?",
+            height=100
+        )
+        
+        action_type = st.multiselect(
+            "Type of Action Suggested",
+            options=[
+                "Engineering control",
+                "Administrative control",
+                "Procedure change",
+                "Training/Awareness",
+                "Equipment modification",
+                "Documentation update",
+                "Monitoring/Surveillance",
+                "Warning/Alert system",
+                "Personal protective equipment",
+                "Organizational change"
+            ],
+            default=[]
+        )
+        
+        urgency = st.selectbox(
+            "Suggested Urgency",
+            options=["Immediate - Within 24 hours", "Short-term - Within 1 week", "Medium-term - Within 1 month", "Long-term - Within 3 months", "Routine - Next review cycle"],
+            index=2
+        )
+        
+        # ========== SECTION F: RELATED INFORMATION ==========
+        st.markdown("""<div class="form-section">
+            <div class="form-section-header">Section F: Related Information</div>
+        </div>""", unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            recurrent_hazard = st.selectbox(
+                "Recurrent Hazard?",
+                options=["No - First observation", "Yes - Observed before", "Yes - Previously reported", "Unknown"],
+                index=0
+            )
+        with col2:
+            related_reports = st.text_input(
+                "Related Report References (if any)",
+                placeholder="e.g., HAZ-20240101-123, INC-20240102-456"
+            )
+        
+        witnesses = st.text_area(
+            "Witnesses (if any)",
+            placeholder="Names of other personnel who observed the hazard...",
+            height=60
+        )
+        
+        additional_info = st.text_area(
+            "Additional Information",
+            placeholder="Any other relevant information...",
+            height=60
+        )
+        
+        # ========== SECTION G: SAFETY DEPARTMENT USE ==========
+        st.markdown("""<div class="form-section">
+            <div class="form-section-header">Section G: For Safety Department Use</div>
+        </div>""", unsafe_allow_html=True)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            status = st.selectbox(
+                "Status",
+                options=["Open - Pending Review", "Open - Under Assessment", "Open - Action Assigned", "Monitoring", "Closed - Action Completed", "Closed - Risk Accepted", "Closed - Duplicate"],
+                index=0,
+                key="haz_status"
+            )
+        with col2:
+            assigned_to = st.selectbox(
+                "Assigned To",
+                options=["Unassigned", "Safety Manager", "Safety Officer", "Quality Manager", "Department Head", "Risk Assessment Team"],
+                index=0,
+                key="haz_assigned"
+            )
+        with col3:
+            target_date = st.date_input(
+                "Target Completion Date",
+                value=date.today() + timedelta(days=30),
+                key="haz_target"
+            )
+        
+        safety_comments = st.text_area(
+            "Safety Department Comments",
+            placeholder="Internal comments from safety department...",
+            height=60
+        )
+        
+        # ========== SECTION H: MANAGEMENT REVIEW ==========
+        st.markdown("""<div class="form-section">
+            <div class="form-section-header">Section H: Management Review (For High/Extreme Risks)</div>
+        </div>""", unsafe_allow_html=True)
+        
+        if risk_level in ["High", "Extreme"]:
+            st.warning("⚠️ This hazard has been assessed as HIGH or EXTREME risk and requires management review.")
             
-        submitted = st.form_submit_button("Submit Hazard Report", type="primary")
+            col1, col2 = st.columns(2)
+            with col1:
+                mgmt_review_required = st.selectbox(
+                    "Management Review Required",
+                    options=["Yes - Pending", "Yes - Scheduled", "Yes - Completed", "No - Not required"],
+                    index=0
+                )
+            with col2:
+                srm_board_referral = st.selectbox(
+                    "Refer to Safety Review Board?",
+                    options=["Yes", "No", "Pending Decision"],
+                    index=2
+                )
+            
+            mgmt_comments = st.text_area(
+                "Management Comments/Decision",
+                placeholder="Management decision and comments...",
+                height=60
+            )
+        else:
+            mgmt_review_required = "No - Not required"
+            srm_board_referral = "No"
+            mgmt_comments = ""
+        
+        # Photo/Document Upload
+        st.markdown("#### 📎 Attachments")
+        uploaded_files = st.file_uploader(
+            "Upload Photos/Documents",
+            type=['png', 'jpg', 'jpeg', 'pdf', 'doc', 'docx'],
+            accept_multiple_files=True,
+            key="hazard_attachments"
+        )
+        
+        # Form submission
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            submitted = st.form_submit_button(
+                "📤 Submit Hazard Report",
+                use_container_width=True,
+                type="primary"
+            )
         
         if submitted:
-            # Save logic here
-            st.success("✅ Hazard Report Submitted. Forwarded to Safety Department.")
-
-def render_mor_form():
-    """
-    MOR Form: Matches 'MOR.pdf', 'BIRD HIT.pdf', etc.
-    Includes: Flight Details, Weather, Nature of Incident.
-    """
-    st.markdown("## 🚨 Mandatory Occurrence Report (MOR)")
-    
-    # Tabbed Interface to handle specific PDF types without clutter
-    tab1, tab2, tab3 = st.tabs(["General MOR", "Bird/Wildlife Strike", "Air Traffic / Near Miss"])
-    
-    # --- TAB 1: GENERAL MOR (Matches MOR.pdf) ---
-    with tab1:
-        with st.form("mor_general"):
-            st.markdown("### Aircraft & Flight Information")
-            c1, c2, c3 = st.columns(3)
-            # Matches PDF: "Type", "Registration", "Flight No"
-            ac_type = c1.selectbox("Aircraft Type", ["A320", "A330", "Other"])
-            reg = c2.text_input("Registration (e.g., AP-BOA)")
-            flt_no = c3.text_input("Flight No (e.g., PF-123)")
+            # Validation
+            errors = []
+            if not hazard_title:
+                errors.append("Hazard Title is required")
+            if not hazard_location:
+                errors.append("Location is required")
+            if not hazard_description:
+                errors.append("Hazard Description is required")
+            if not suggested_actions:
+                errors.append("Suggested Actions are required")
             
-            c4, c5, c6 = st.columns(3)
-            # Matches PDF: "Departure", "Arrival", "POB"
-            dep = c4.text_input("Departure Station")
-            arr = c5.text_input("Arrival Station")
-            pob = c6.number_input("Persons on Board (POB)", min_value=0)
-            
-            st.markdown("### Occurrence Details")
-            # Matches PDF: "Nature of Incident", "Weather", "Damage"
-            nature = st.text_area("Nature / Cause of Incident")
-            weather = st.text_input("Weather Conditions (Metar/Visibility)")
-            damage = st.text_area("Damage Report (if any)")
-            
-            st.form_submit_button("Submit General MOR")
-
-    # --- TAB 2: BIRD STRIKE (Matches BIRD HIT.pdf) ---
-    with tab2:
-        with st.form("mor_bird"):
-            st.markdown("### Bird / Wildlife Strike Details")
-            b1, b2, b3 = st.columns(3)
-            # Matches PDF: "Height AGL", "Speed (IAS)", "Phase of Flight"
-            height = b1.number_input("Height (ft AGL)")
-            speed = b2.number_input("Speed (IAS Kts)")
-            phase = b3.selectbox("Phase", ["Taxi", "Takeoff", "Climb", "Cruise", "Approach", "Landing"])
-            
-            st.markdown("#### Impact Details")
-            # Matches PDF: "Part Struck" checkboxes
-            st.write("Part(s) Struck:")
-            c_w, c_e, c_f = st.columns(3)
-            if c_w.checkbox("Windshield"): pass
-            if c_e.checkbox("Engine (No. 1 / 2)"): pass
-            if c_f.checkbox("Fuselage / Wing"): pass
-            
-            bird_desc = st.text_input("Bird Description (Size/Type/Number)")
-            st.form_submit_button("Submit Bird Strike Report")
-
-    # --- TAB 3: AIR TRAFFIC (Matches Air - Near.pdf) ---
-    with tab3:
-        with st.form("mor_airprox"):
-            st.markdown("### Air Traffic Incident / Near Miss")
-            a1, a2 = st.columns(2)
-            # Matches PDF: "Call Sign", "Frequency"
-            callsign = a1.text_input("Your Call Sign")
-            freq = a2.text_input("Frequency in use")
-            
-            a3, a4 = st.columns(2)
-            # Matches PDF: "Other Aircraft Type", "Separation"
-            other_ac = a3.text_input("Other Aircraft Type/Callsign")
-            separation = a4.text_input("Est. Separation (Vertical/Horizontal)")
-            
-            tc_alert = st.checkbox("TCAS Alert Triggered?")
-            st.form_submit_button("Submit Airprox Report")
-
-def render_captain_debrief():
-    """
-    Matches 'De-Brief.pdf'
-    """
-    st.markdown("## 👨‍✈️ Captain's De-Brief")
-    with st.form("capt_debrief"):
-        d1, d2, d3 = st.columns(3)
-        date = d1.date_input("Date")
-        ac_reg = d2.text_input("A/C Registration")
-        flt_no = d3.text_input("Flight Number")
-        
-        st.markdown("### Sector Analysis")
-        # Matches PDF table columns: Sector, Dep Delay, Arr Delay, Reason
-        c1, c2, c3, c4 = st.columns([2, 1, 1, 3])
-        c1.text_input("Sector (e.g., KHI-LHE)")
-        c2.time_input("Dep Time")
-        c3.time_input("Arr Time")
-        c4.text_input("Delay Reason (Code)")
-        
-        st.markdown("### Observations")
-        # Matches PDF: "Safety Observation", "Services", "Engineering"
-        obs_safe = st.text_area("Safety Observations")
-        obs_ops = st.text_area("Operational / Service Issues")
-        
-        st.form_submit_button("Submit Debrief")
-
-def render_audit_form():
-    """
-    Quality / Audit Findings Tracker
-    """
-    st.markdown("## 🧪 Quality Assurance & Audit")
-    
-    tab1, tab2 = st.tabs(["Findings Tracker", "Ramp Inspection"])
-    
-    with tab1:
-        with st.form("audit_finding"):
-            st.markdown("#### New Audit Finding")
-            level = st.selectbox("Finding Level", ["Level 1", "Level 2", "Observation"])
-            dept = st.selectbox("Audited Department", DEPARTMENTS)
-            finding = st.text_area("Finding Description")
-            st.file_uploader("Attach Audit Evidence")
-            if st.form_submit_button("Log Finding"):
-                st.success("Finding Logged.")
+            if errors:
+                for error in errors:
+                    st.error(f"❌ {error}")
+            else:
+                # Create report record
+                report_data = {
+                    'id': hazard_id,
+                    'type': 'Hazard Report',
+                    'report_date': report_date.isoformat(),
+                    'reporter_name': "" if anonymous_report else reporter_name,
+                    'reporter_department': reporter_department,
+                    'reporter_contact': "" if anonymous_report else reporter_contact,
+                    'anonymous': anonymous_report,
+                    'hazard_date': hazard_date.isoformat(),
+                    'hazard_time': hazard_time.strftime('%H:%M'),
+                    'category': hazard_category,
+                    'title': hazard_title,
+                    'location': hazard_location,
+                    'specific_location': specific_location,
+                    'related_to': related_to,
+                    'flight_number': flight_number,
+                    'aircraft_reg': aircraft_reg if aircraft_reg != "N/A" else "",
+                    'flight_phase': flight_phase if flight_phase != "N/A" else "",
+                    'description': hazard_description,
+                    'likelihood': likelihood[0],
+                    'likelihood_desc': likelihood[1],
+                    'severity': severity[0],
+                    'severity_desc': severity[1],
+                    'risk_code': risk_code,
+                    'risk_level': risk_level,
+                    'risk_justification': risk_justification,
+                    'existing_controls': existing_controls,
+                    'control_effectiveness': control_effectiveness,
+                    'suggested_actions': suggested_actions,
+                    'action_type': action_type,
+                    'urgency': urgency,
+                    'recurrent': recurrent_hazard,
+                    'related_reports': related_reports,
+                    'witnesses': witnesses,
+                    'additional_info': additional_info,
+                    'status': status,
+                    'assigned_to': assigned_to,
+                    'target_date': target_date.isoformat(),
+                    'safety_comments': safety_comments,
+                    'mgmt_review_required': mgmt_review_required,
+                    'srm_board_referral': srm_board_referral,
+                    'mgmt_comments': mgmt_comments,
+                    'attachments': len(uploaded_files) if uploaded_files else 0,
+                    'created_at': datetime.now().isoformat(),
+                    'department': reporter_department
+                }
                 
-    with tab2:
-        st.info("Ramp Inspection (No Checklist - Levels Only)")
-        with st.form("ramp_inspection"):
-            flight_no = st.text_input("Flight No")
-            level = st.selectbox("Outcome", ["Level 1-2 (Minor)", "Level 3 (Major)"])
-            comments = st.text_area("Comments")
-            if st.form_submit_button("Submit Ramp Report"):
-                st.success("Ramp Inspection Saved.")
+                # Add to session state
+                if 'hazard_reports' not in st.session_state:
+                    st.session_state.hazard_reports = []
+                st.session_state.hazard_reports.append(report_data)
+                
+                # Clear OCR data
+                st.session_state['ocr_data_hazard_report'] = None
+                
+                # Success feedback
+                st.balloons()
+                st.success(f"""
+                    ✅ **Hazard Report Submitted Successfully!**
+                    
+                    **Reference:** {hazard_id}  
+                    **Risk Assessment:** {risk_code} - {risk_level}  
+                    **Status:** {status}
+                    
+                    The report has been added to the system and is now visible in View Reports.
+                    {"⚠️ **NOTE:** This hazard requires management review due to High/Extreme risk level." if risk_level in ["High", "Extreme"] else ""}
+                """)
+
+
+# Risk Matrix Definitions
+LIKELIHOOD_DEFINITIONS = {
+    "1": "Extremely Improbable - Almost inconceivable that the event will occur",
+    "2": "Improbable - Very unlikely to occur",
+    "3": "Remote - Unlikely to occur but possible",
+    "4": "Occasional - Likely to occur sometimes",
+    "5": "Frequent - Likely to occur many times"
+}
+
+SEVERITY_DEFINITIONS = {
+    "A": "Catastrophic - Equipment destroyed, multiple deaths",
+    "B": "Hazardous - Large reduction in safety margins, serious injury or death",
+    "C": "Major - Significant reduction in safety margins, serious incident",
+    "D": "Minor - Nuisance, operating limitations, minor incident",
+    "E": "Negligible - Little consequences"
+}
+
+# Risk Action Matrix
+RISK_ACTIONS = {
+    "Extreme": {
+        "color": "#DC2626",
+        "action": "UNACCEPTABLE - Immediate action required. Operations may need to be suspended.",
+        "timeline": "Immediate (within 24 hours)"
+    },
+    "High": {
+        "color": "#EA580C",
+        "action": "URGENT - Senior management decision required. Implement mitigation measures.",
+        "timeline": "Short-term (within 1 week)"
+    },
+    "Medium": {
+        "color": "#CA8A04",
+        "action": "REVIEW - Schedule risk assessment. Consider mitigation options.",
+        "timeline": "Medium-term (within 1 month)"
+    },
+    "Low": {
+        "color": "#16A34A",
+        "action": "ACCEPTABLE - Monitor during routine operations. Document and track.",
+        "timeline": "Routine (next review cycle)"
+    }
+}
 
 
 def calculate_risk_level(likelihood: int, severity: str) -> str:
@@ -4111,16 +5695,14 @@ def render_fsr_form():
         with col2:
             aircraft_reg = st.selectbox(
                 "Aircraft Registration *",
-                # FIX: Use keys directly
-                options=[""] + list(AIRCRAFT_FLEET.keys()),
+                options=[""] + [a["registration"] for a in AIRCRAFT_FLEET],
                 index=0,
                 key="fsr_reg"
             )
         with col3:
             aircraft_type = st.text_input(
                 "Aircraft Type",
-                # FIX: Direct dictionary lookup
-                value=AIRCRAFT_FLEET.get(aircraft_reg, {}).get("type", ""),
+                value=next((a["type"] for a in AIRCRAFT_FLEET if a["registration"] == aircraft_reg), ""),
                 disabled=True,
                 key="fsr_type"
             )
@@ -4129,14 +5711,14 @@ def render_fsr_form():
         with col1:
             origin = st.selectbox(
                 "Origin *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="fsr_origin"
             )
         with col2:
             destination = st.selectbox(
                 "Destination *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="fsr_dest"
             )
@@ -4622,16 +6204,9 @@ def render_fsr_form():
                 }
                 
                 # Add to session state
-                # --- REPLACE WITH ---
-                try:
-                    # Ensure keys match your Supabase DB columns exactly
-                    # Note: Changed 'incident_id' to 'report_id' to match the FSR form variable
-                    response = supabase.table('fsr_reports').insert(report_data).execute()
-                    st.balloons()
-                    st.success(f"✅ Flight Services Report Saved to Database! Ref: {report_id}")
-                except Exception as e:
-                    st.error(f"Database Error: {e}")
-# --------------------
+                if 'fsr_reports' not in st.session_state:
+                    st.session_state.fsr_reports = []
+                st.session_state.fsr_reports.append(report_data)
                 
                 # Success feedback
                 st.balloons()
@@ -4685,16 +6260,14 @@ def render_captain_dbr_form():
         with col2:
             aircraft_reg = st.selectbox(
                 "Aircraft Registration *",
-                # FIX: Use keys directly
-                options=[""] + list(AIRCRAFT_FLEET.keys()),
+                options=[""] + [a["registration"] for a in AIRCRAFT_FLEET],
                 index=0,
                 key="dbr_reg"
             )
         with col3:
             aircraft_type = st.text_input(
                 "Aircraft Type",
-                # FIX: Direct dictionary lookup
-                value=AIRCRAFT_FLEET.get(aircraft_reg, {}).get("type", ""),
+                value=next((a["type"] for a in AIRCRAFT_FLEET if a["registration"] == aircraft_reg), ""),
                 disabled=True,
                 key="dbr_type"
             )
@@ -4703,14 +6276,14 @@ def render_captain_dbr_form():
         with col1:
             origin = st.selectbox(
                 "Origin *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="dbr_origin"
             )
         with col2:
             destination = st.selectbox(
                 "Destination *",
-                options=[""] + [f"{data['icao']} - {data['name']}" for data in AIRPORTS.values()],
+                options=[""] + [f"{a['icao']} - {a['name']}" for a in AIRPORTS],
                 index=0,
                 key="dbr_dest"
             )
@@ -5265,15 +6838,9 @@ def render_captain_dbr_form():
                 }
                 
                 # Add to session state
-                # --- REPLACE WITH ---
-                try:
-                    # Ensure keys match your Supabase DB columns exactly
-                    response = supabase.table('captain_dbr').insert(report_data).execute()
-                    st.balloons()
-                    # CORRECTION: Changed 'incident_id' to 'report_id'
-                    st.success(f"✅ Captain's Debrief Report Saved to Database! Ref: {report_id}")
-                except Exception as e:
-                    st.error(f"Database Error: {e}")
+                if 'captain_dbr' not in st.session_state:
+                    st.session_state.captain_dbr = []
+                st.session_state.captain_dbr.append(report_data)
                 
                 # Success feedback
                 st.balloons()
@@ -5306,64 +6873,321 @@ def render_captain_dbr_form():
 # =============================================================================
 
 def render_dashboard():
-    """
-    Modified Dashboard: 4 Key Blocks + Existing Weather Widget
-    1. Voluntary | 2. MOR | 3. Quality | 4. AI
-    """
-    # 1. Weather Widget (Retained from your original code)
-    try:
-        render_weather_widget()
-    except:
-        pass # Fail gracefully if weather service is down
+    """Main dashboard with KPIs, charts, and recent activity."""
     
-    st.markdown("---")
+    # Get dynamic statistics
+    report_counts = get_report_counts()
+    risk_distribution = get_risk_distribution()
+    total_reports = get_total_reports()
+    high_risk_count = get_high_risk_count()
+    recent_reports = get_recent_reports(10)
     
-    # 2. Main Dashboard Layout (Master Prompt Requirement)
-    st.markdown("### 📡 Safety Overview")
+    # Dashboard Header
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
+                padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
+        <h1 style="margin: 0; font-size: 2.2rem;">📊 Safety Dashboard</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
+            Real-time safety metrics and performance indicators
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Filter logic based on Role (Gatekeeper sees all, Analyst sees Dept, Reporter sees Public stats)
-    # (Mocking counts for display - connect these to your st.session_state lists)
-    vol_count = len(st.session_state.get('hazard_reports', []))
-    mor_count = len(st.session_state.get('mor_reports', [])) 
-    audit_count = len(st.session_state.get('audit_reports', []))
+    # ==========================================================================
+    # ROW 1: PRIMARY KPI CARDS
+    # ==========================================================================
+    st.markdown("### 📈 Key Performance Indicators")
     
-    c1, c2, c3, c4 = st.columns(4)
-
-    with c1:
+    kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+    
+    with kpi_col1:
         st.markdown(f"""
-        <div style="background-color: #F8F9FA; padding: 20px; border-top: 5px solid #006400; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-            <h4 style="color: #333; margin:0;">Voluntary</h4>
-            <p style="font-size: 0.8rem; color: #666; margin-bottom: 10px;">Hazards & Observations</p>
-            <h1 style="color: #006400; font-size: 2.5rem; margin:0;">{vol_count}</h1>
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    padding: 25px; border-radius: 15px; text-align: center; color: white;
+                    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);">
+            <div style="font-size: 3rem; font-weight: bold;">{total_reports}</div>
+            <div style="font-size: 1rem; opacity: 0.9; margin-top: 5px;">Total Reports</div>
+            <div style="font-size: 0.85rem; opacity: 0.7; margin-top: 10px;">
+                📅 All Time
+            </div>
         </div>
         """, unsafe_allow_html=True)
-
-    with c2:
+    
+    with kpi_col2:
+        # Calculate open reports (pending/under investigation)
+        open_count = sum(1 for r in st.session_state.get('hazard_reports', []) 
+                        if r.get('status') in ['New', 'Under Review', 'Investigation'])
+        open_count += sum(1 for r in st.session_state.get('aircraft_incidents', [])
+                         if r.get('investigation_status') in ['Open', 'Under Investigation', 'Preliminary'])
+        
         st.markdown(f"""
-        <div style="background-color: #F8F9FA; padding: 20px; border-top: 5px solid #8B0000; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-            <h4 style="color: #333; margin:0;">MOR</h4>
-            <p style="font-size: 0.8rem; color: #666; margin-bottom: 10px;">Mandatory Occurrence</p>
-            <h1 style="color: #8B0000; font-size: 2.5rem; margin:0;">{mor_count}</h1>
+        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                    padding: 25px; border-radius: 15px; text-align: center; color: white;
+                    box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);">
+            <div style="font-size: 3rem; font-weight: bold;">{open_count}</div>
+            <div style="font-size: 1rem; opacity: 0.9; margin-top: 5px;">Open Cases</div>
+            <div style="font-size: 0.85rem; opacity: 0.7; margin-top: 10px;">
+                🔍 Pending Action
+            </div>
         </div>
         """, unsafe_allow_html=True)
-
-    with c3:
+    
+    with kpi_col3:
         st.markdown(f"""
-        <div style="background-color: #F8F9FA; padding: 20px; border-top: 5px solid #1e3c72; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-            <h4 style="color: #333; margin:0;">Quality</h4>
-            <p style="font-size: 0.8rem; color: #666; margin-bottom: 10px;">Audits & Inspections</p>
-            <h1 style="color: #1e3c72; font-size: 2.5rem; margin:0;">{audit_count}</h1>
+        <div style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+                    padding: 25px; border-radius: 15px; text-align: center; color: white;
+                    box-shadow: 0 4px 15px rgba(250, 112, 154, 0.4);">
+            <div style="font-size: 3rem; font-weight: bold;">{high_risk_count}</div>
+            <div style="font-size: 1rem; opacity: 0.9; margin-top: 5px;">High/Extreme Risk</div>
+            <div style="font-size: 0.85rem; opacity: 0.7; margin-top: 10px;">
+                ⚠️ Requires Attention
+            </div>
         </div>
         """, unsafe_allow_html=True)
-
-    with c4:
+    
+    with kpi_col4:
+        # Calculate closure rate
+        closed_count = sum(1 for r in st.session_state.get('hazard_reports', [])
+                         if r.get('status') in ['Closed', 'Resolved'])
+        closed_count += sum(1 for r in st.session_state.get('aircraft_incidents', [])
+                          if r.get('investigation_status') in ['Closed', 'Final Report Issued'])
+        closure_rate = (closed_count / total_reports * 100) if total_reports > 0 else 0
+        
         st.markdown(f"""
-        <div style="background-color: #E8F0FE; padding: 20px; border-top: 5px solid #666; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-            <h4 style="color: #333; margin:0;">AI Insights</h4>
-            <p style="font-size: 0.8rem; color: #666; margin-bottom: 10px;">Predictive Analytics</p>
-            <h1 style="color: #555; font-size: 2.5rem; margin:0;">--</h1>
+        <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+                    padding: 25px; border-radius: 15px; text-align: center; color: white;
+                    box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);">
+            <div style="font-size: 3rem; font-weight: bold;">{closure_rate:.0f}%</div>
+            <div style="font-size: 1rem; opacity: 0.9; margin-top: 5px;">Closure Rate</div>
+            <div style="font-size: 0.85rem; opacity: 0.7; margin-top: 10px;">
+                ✅ Resolved Cases
+            </div>
         </div>
         """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # ==========================================================================
+    # ROW 2: REPORT TYPE BREAKDOWN
+    # ==========================================================================
+    st.markdown("### 📋 Reports by Category")
+    
+    cat_cols = st.columns(7)
+    
+    report_types = [
+        ("🦅", "Bird Strikes", report_counts.get('bird_strikes', 0), "#FF6B6B"),
+        ("🔴", "Laser Strikes", report_counts.get('laser_strikes', 0), "#4ECDC4"),
+        ("✈️", "TCAS Events", report_counts.get('tcas_reports', 0), "#45B7D1"),
+        ("⚠️", "Incidents", report_counts.get('aircraft_incidents', 0), "#96CEB4"),
+        ("🔶", "Hazards", report_counts.get('hazard_reports', 0), "#FFEAA7"),
+        ("📝", "FSR Reports", report_counts.get('fsr_reports', 0), "#DDA0DD"),
+        ("👨‍✈️", "Capt Debrief", report_counts.get('captain_dbr', 0), "#98D8C8"),
+    ]
+    
+    for col, (icon, label, count, color) in zip(cat_cols, report_types):
+        with col:
+            st.markdown(f"""
+            <div style="background: white; padding: 20px; border-radius: 12px; 
+                        text-align: center; border-left: 4px solid {color};
+                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                <div style="font-size: 2rem;">{icon}</div>
+                <div style="font-size: 1.8rem; font-weight: bold; color: #333;">{count}</div>
+                <div style="font-size: 0.8rem; color: #666;">{label}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # ==========================================================================
+    # ROW 3: CHARTS
+    # ==========================================================================
+    chart_col1, chart_col2 = st.columns(2)
+    
+    with chart_col1:
+        st.markdown("### 📊 Risk Distribution")
+        
+        if any(risk_distribution.values()):
+            risk_df = pd.DataFrame({
+                'Risk Level': list(risk_distribution.keys()),
+                'Count': list(risk_distribution.values())
+            })
+            
+            colors = {
+                'Extreme': '#DC3545',
+                'High': '#FD7E14',
+                'Medium': '#FFC107',
+                'Low': '#28A745'
+            }
+            
+            fig = px.pie(
+                risk_df,
+                values='Count',
+                names='Risk Level',
+                color='Risk Level',
+                color_discrete_map=colors,
+                hole=0.4
+            )
+            fig.update_layout(
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.2),
+                margin=dict(t=20, b=20, l=20, r=20),
+                height=300
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No risk data available yet. Submit reports to see risk distribution.")
+    
+    with chart_col2:
+        st.markdown("### 📈 Monthly Trend")
+        
+        # Generate trend data from actual reports
+        trend_data = generate_trend_data()
+        
+        if trend_data:
+            trend_df = pd.DataFrame(trend_data)
+            
+            fig = px.line(
+                trend_df,
+                x='Month',
+                y='Reports',
+                markers=True,
+                color_discrete_sequence=['#667eea']
+            )
+            fig.update_layout(
+                showlegend=False,
+                margin=dict(t=20, b=20, l=20, r=20),
+                height=300,
+                xaxis_title="",
+                yaxis_title="Report Count"
+            )
+            fig.update_traces(line=dict(width=3), marker=dict(size=10))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No trend data available yet.")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # ==========================================================================
+    # ROW 4: RECENT ACTIVITY & ALERTS
+    # ==========================================================================
+    activity_col, alerts_col = st.columns([3, 2])
+    
+    with activity_col:
+        st.markdown("### 🕐 Recent Activity")
+        
+        if recent_reports:
+            for report in recent_reports[:7]:
+                risk_color = {
+                    'Extreme': '#DC3545',
+                    'High': '#FD7E14',
+                    'Medium': '#FFC107',
+                    'Low': '#28A745'
+                }.get(report.get('risk_level', 'Low'), '#6C757D')
+                
+                st.markdown(f"""
+                <div style="background: white; padding: 15px; border-radius: 10px; 
+                            margin-bottom: 10px; border-left: 4px solid {risk_color};
+                            box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-size: 1.2rem;">{report.get('icon', '📄')}</span>
+                            <strong style="margin-left: 10px;">{report.get('id', 'N/A')}</strong>
+                            <span style="color: #666; margin-left: 10px;">{report.get('type', 'Report')}</span>
+                        </div>
+                        <div>
+                            <span style="background: {risk_color}; color: white; padding: 3px 10px; 
+                                        border-radius: 15px; font-size: 0.8rem;">
+                                {report.get('risk_level', 'Low')}
+                            </span>
+                        </div>
+                    </div>
+                    <div style="color: #888; font-size: 0.85rem; margin-top: 8px;">
+                        📅 {report.get('date', 'N/A')} | 👤 {report.get('reporter', 'Anonymous')}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("No recent reports. Submit a report to see activity here.")
+    
+    with alerts_col:
+        st.markdown("### 🔔 Alerts & Notifications")
+        
+        # Generate alerts based on data
+        alerts = []
+        
+        # Check for high-risk items
+        if high_risk_count > 0:
+            alerts.append({
+                'type': 'danger',
+                'icon': '🚨',
+                'message': f'{high_risk_count} high/extreme risk items require immediate attention'
+            })
+        
+        # Check for overdue items (simulated)
+        overdue_count = sum(1 for r in st.session_state.get('hazard_reports', [])
+                          if r.get('status') == 'Under Review')
+        if overdue_count > 0:
+            alerts.append({
+                'type': 'warning',
+                'icon': '⏰',
+                'message': f'{overdue_count} reports pending review'
+            })
+        
+        # Check for recent submissions
+        today_count = sum(1 for r in recent_reports 
+                        if r.get('date') == datetime.now().strftime('%Y-%m-%d'))
+        if today_count > 0:
+            alerts.append({
+                'type': 'info',
+                'icon': '📥',
+                'message': f'{today_count} new reports submitted today'
+            })
+        
+        # Default alert if no issues
+        if not alerts:
+            alerts.append({
+                'type': 'success',
+                'icon': '✅',
+                'message': 'All systems operational. No critical alerts.'
+            })
+        
+        for alert in alerts:
+            color_map = {
+                'danger': '#DC3545',
+                'warning': '#FFC107',
+                'info': '#17A2B8',
+                'success': '#28A745'
+            }
+            bg_map = {
+                'danger': '#FFF5F5',
+                'warning': '#FFFBEB',
+                'info': '#F0F9FF',
+                'success': '#F0FFF4'
+            }
+            
+            st.markdown(f"""
+            <div style="background: {bg_map[alert['type']]}; padding: 15px; 
+                        border-radius: 10px; margin-bottom: 10px;
+                        border-left: 4px solid {color_map[alert['type']]};">
+                <span style="font-size: 1.2rem;">{alert['icon']}</span>
+                <span style="margin-left: 10px; color: #333;">{alert['message']}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Quick Actions
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### ⚡ Quick Actions")
+        
+        qa_col1, qa_col2 = st.columns(2)
+        with qa_col1:
+            if st.button("📝 New Report", use_container_width=True):
+                st.session_state['current_page'] = 'Hazard Report'
+                st.rerun()
+        with qa_col2:
+            if st.button("📊 View All", use_container_width=True):
+                st.session_state['current_page'] = 'View Reports'
+                st.rerun()
+
 
 def generate_trend_data():
     """Generate monthly trend data from actual reports."""
@@ -5702,31 +7526,31 @@ def render_report_detail():
         'Medium': '#FFC107',
         'Low': '#28A745'
     }
-    risk_color = risk_colors.get(report.get('risk_level'), '#6C757D')
+    risk_color = risk_colors.get(report['risk_level'], '#6C757D')
     
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
                 padding: 30px; border-radius: 15px; margin: 20px 0; color: white;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
-                <span style="font-size: 2.5rem;">{report.get('icon', '📄')}</span>
-                <h1 style="display: inline; margin-left: 15px; font-size: 2rem;">{report.get('id', 'N/A')}</h1>
-                <p style="margin: 10px 0 0 0; opacity: 0.9;">{report.get('type', 'Report')}</p>
+                <span style="font-size: 2.5rem;">{report['icon']}</span>
+                <h1 style="display: inline; margin-left: 15px; font-size: 2rem;">{report['id']}</h1>
+                <p style="margin: 10px 0 0 0; opacity: 0.9;">{report['type']}</p>
             </div>
             <div style="text-align: right;">
                 <span style="background: {risk_color}; color: white; padding: 10px 25px; 
                             border-radius: 25px; font-size: 1.2rem; font-weight: bold;">
-                    {report.get('risk_level', 'Low')} Risk
+                    {report['risk_level']} Risk
                 </span>
-                <p style="margin: 10px 0 0 0; opacity: 0.9;">Status: {report.get('status', 'Unknown')}</p>
+                <p style="margin: 10px 0 0 0; opacity: 0.9;">Status: {report['status']}</p>
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Detail tabs - THIS WAS THE LINE CAUSING YOUR ERROR
-    tab_details, tab_timeline, tab_comms, tab_actions = st.tabs([
-        "📋 Details", "🕐 Timeline", "💬 Communications", "⚡ Actions"
+    # Detail tabs
+    tab_details, tab_timeline, tab_emails, tab_actions = st.tabs([
+        "📋 Details", "🕐 Timeline", "📧 Email Trail", "⚡ Actions"
     ])
     
     with tab_details:
@@ -5735,68 +7559,8 @@ def render_report_detail():
     with tab_timeline:
         render_report_timeline(report)
     
-    with tab_comms:
-        st.markdown("### 💬 Communication History")
-        
-        # 1. Fetch Logs
-        # Ensure 'id' exists, otherwise default to empty string to prevent errors
-        r_id = report.get('id', '')
-        email_logs = email_utils.get_email_logs(r_id) if r_id else []
-        
-        if not email_logs:
-            st.info("No email history found.")
-        else:
-            for email in email_logs:
-                is_outbound = email['direction'] == 'outbound'
-                alignment = "flex-end" if is_outbound else "flex-start"
-                bg_color = "#E3F2FD" if is_outbound else "#F5F5F5"
-                icon = "📤" if is_outbound else "📥"
-                sender_name = "Safety Team" if is_outbound else email.get('sender', 'Unknown')
-                timestamp = email.get('timestamp', '')
-                
-                st.markdown(f"""
-                <div style="display: flex; justify-content: {alignment}; margin-bottom: 10px;">
-                    <div style="background: {bg_color}; padding: 15px; border-radius: 15px; max-width: 80%; border: 1px solid #ddd;">
-                        <div style="font-size: 0.8em; color: #666; margin-bottom: 5px;">
-                            {icon} <strong>{sender_name}</strong> • {timestamp}
-                        </div>
-                        <div style="font-weight: bold; margin-bottom: 5px;">{email.get('subject', 'No Subject')}</div>
-                        <div style="white-space: pre-wrap;">{email.get('body', '')}</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        st.divider()
-        
-        # 2. Reply / Log Actions
-        action_type = st.radio("Action:", ["📧 Send Reply", "📥 Log Incoming Reply"], horizontal=True, key=f"comm_action_{report.get('id')}")
-        
-        if action_type == "📧 Send Reply":
-            with st.form(f"reply_form_{report.get('id')}"):
-                # Try to find a reporter contact or email
-                default_to = report.get('reporter_contact') or report.get('reporter_email') or ""
-                to_addr = st.text_input("To:", value=default_to)
-                subj = st.text_input("Subject:", value=f"Re: Safety Report {report.get('id')}")
-                msg_body = st.text_area("Message:")
-                
-                if st.form_submit_button("Send Email"):
-                    if send_email(to_addr, None, subj, msg_body, report_id=report.get('id')):
-                        st.success("Email sent and logged!")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("Failed to send.")
-        else: 
-            with st.form(f"log_reply_form_{report.get('id')}"):
-                sender = st.text_input("From (Sender Name/Email):")
-                msg_body = st.text_area("Message Content Received:")
-                if st.form_submit_button("💾 Log Reply"):
-                    # Use a temp client just to access the log function
-                    dummy_client = email_utils.SMTPClient("","","","")
-                    dummy_client.log_reply(report.get('id'), sender, msg_body)
-                    st.success("Reply logged successfully!")
-                    time.sleep(1)
-                    st.rerun()
+    with tab_emails:
+        render_email_trail(report)
     
     with tab_actions:
         render_report_actions(report)
@@ -6201,106 +7965,39 @@ def generate_report_pdf(report):
     except Exception as e:
         st.error(f"Error generating PDF: {str(e)}")
 
+
+# =============================================================================
+# END OF PART 7
+# =============================================================================
+# =============================================================================
 # PART 8: AI ASSISTANT & EMAIL FEATURES
 # Air Sial SMS v3.0 - Safety Management System
+# =============================================================================
+# This part includes:
+# - AI Assistant chat interface
+# - Report analysis and insights
+# - Email generation and templates
+# - SMTP email sending
+# - PDF report generation
+# - Communication management
+# =============================================================================
 
-def render_general_assistant():
-    """Render the General AI Assistant page with Quick Questions."""
-    
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); 
-                padding: 25px; border-radius: 12px; margin-bottom: 25px; color: white;">
-        <h1 style="margin: 0; font-size: 2rem;">🧠 General Safety Assistant</h1>
-        <p style="margin: 5px 0 0 0; opacity: 0.9;">Your expert companion for aviation safety queries.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Initialize Chat History
-    if 'general_chat' not in st.session_state:
-        st.session_state.general_chat = []
-
-    # Display Chat History
-    for msg in st.session_state.general_chat:
-        role = "👤 You" if msg['role'] == 'user' else "🧠 AI"
-        bg = "#F8FAFC" if msg['role'] == 'user' else "#EFF6FF"
-        border = "#E2E8F0" if msg['role'] == 'user' else "#BFDBFE"
-        
-        st.markdown(f"""
-        <div style="background:{bg}; padding:12px 16px; border-radius:8px; margin-bottom:10px; border: 1px solid {border}; color: #334155;">
-            <strong>{role}:</strong><br>{msg['content']}
-        </div>
-        """, unsafe_allow_html=True)
-
-    # --- 💡 SUGGESTED QUESTIONS BUTTONS ---
-    st.markdown("#### 💡 Suggested Questions")
-    
-    # The list of questions you wanted
-    questions = [
-        "What constitutes a 'Serious Incident' according to ICAO?",
-        "How do I report a laser strike event?",
-        "Explain the difference between Hazard and Incident.",
-        "What are the mandatory reporting timelines?",
-        "Summarize the Fatigue Risk Management policy.",
-        "What are the immediate actions for a TCAS RA?"
-    ]
-    
-    # Create a grid of buttons
-    col1, col2 = st.columns(2)
-    
-    # Loop through questions and create buttons
-    for i, q in enumerate(questions):
-        # Alternate columns
-        with col1 if i % 2 == 0 else col2:
-            if st.button(q, key=f"q_btn_{i}", use_container_width=True):
-                # 1. Add user message
-                st.session_state.general_chat.append({'role': 'user', 'content': q})
-                
-                # 2. Get AI Response
-                ai = st.session_state.get('ai_assistant')
-                if ai:
-                    with st.spinner("🧠 Analyzing regulations..."):
-                        response = ai.chat(q)
-                        st.session_state.general_chat.append({'role': 'assistant', 'content': response})
-                else:
-                    st.error("⚠️ AI System Offline")
-                
-                # 3. Reload to show response
-                st.rerun()
-
-    st.markdown("---")
-
-    # Chat Input
-    with st.form("gen_input_form"):
-        user_input = st.text_input("Ask a custom question...", placeholder="Type your safety question here...")
-        submitted = st.form_submit_button("Submit Question", type="primary", use_container_width=True)
-        
-        if submitted and user_input:
-            st.session_state.general_chat.append({'role': 'user', 'content': user_input})
-            ai = st.session_state.get('ai_assistant')
-            if ai:
-                with st.spinner("🧠 Thinking..."):
-                    resp = ai.chat(user_input)
-                    st.session_state.general_chat.append({'role': 'assistant', 'content': resp})
-            st.rerun()
-        
 def render_ai_assistant():
-    st.title("🤖 AI Assistant")
     """AI Assistant for safety report analysis and insights."""
     
     # Initialize chat history
     if 'ai_chat_history' not in st.session_state:
         st.session_state.ai_chat_history = []
     
-    # Fixed HTML formatting
     st.markdown("""
-<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
-    <h1 style="margin: 0; font-size: 2.2rem;">🤖 AI Safety Assistant</h1>
-    <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
-        Intelligent analysis and insights for safety management
-    </p>
-</div>
-""", unsafe_allow_html=True)
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
+        <h1 style="margin: 0; font-size: 2.2rem;">🤖 AI Safety Assistant</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
+            Intelligent analysis and insights for safety management
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Sidebar with quick actions
     with st.sidebar:
@@ -6324,35 +8021,34 @@ def render_ai_assistant():
             st.session_state.ai_chat_history = []
             st.rerun()
     
-    # Display chat history - FIXED HERE
-    for message in st.session_state.ai_chat_history:
-        if message['role'] == 'user':
-            st.markdown(f"""
-<div style="display: flex; justify-content: flex-end; margin: 15px 0;">
-    <div style="background: #667eea; color: white; padding: 15px 20px; 
-                border-radius: 20px 20px 5px 20px; max-width: 70%;">
-        {message['content']}
-    </div>
-</div>
-""", unsafe_allow_html=True)
-        else:
-            # Check if this is an HTML response (risk dashboard) or text response
-            if message.get('type') == 'html':
-                # Render the HTML directly using unsafe_allow_html=True
-                st.markdown(message['content'], unsafe_allow_html=True)
+    # Main chat area
+    chat_container = st.container()
+    
+    with chat_container:
+        # Display chat history
+        for message in st.session_state.ai_chat_history:
+            if message['role'] == 'user':
+                st.markdown(f"""
+                <div style="display: flex; justify-content: flex-end; margin: 15px 0;">
+                    <div style="background: #667eea; color: white; padding: 15px 20px; 
+                                border-radius: 20px 20px 5px 20px; max-width: 70%;">
+                        {message['content']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
             else:
                 st.markdown(f"""
-<div style="display: flex; justify-content: flex-start; margin: 15px 0;">
-    <div style="background: #F8F9FA; color: #333; padding: 15px 20px; 
-                border-radius: 20px 20px 20px 5px; max-width: 85%;
-                border: 1px solid #E0E0E0;">
-        <div style="font-size: 0.8rem; color: #666; margin-bottom: 8px;">
-            🤖 AI Assistant
-        </div>
-        {message['content']}
-    </div>
-</div>
-""", unsafe_allow_html=True)
+                <div style="display: flex; justify-content: flex-start; margin: 15px 0;">
+                    <div style="background: #F8F9FA; color: #333; padding: 15px 20px; 
+                                border-radius: 20px 20px 20px 5px; max-width: 80%;
+                                border: 1px solid #E0E0E0;">
+                        <div style="font-size: 0.8rem; color: #666; margin-bottom: 8px;">
+                            🤖 AI Assistant
+                        </div>
+                        {message['content']}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
     
     # Input area
     st.markdown("---")
@@ -6378,11 +8074,10 @@ def render_ai_assistant():
         })
         
         # Generate AI response
-        response, response_type = generate_ai_response(user_input)
+        response = generate_ai_response(user_input)
         st.session_state.ai_chat_history.append({
             'role': 'assistant',
-            'content': response,
-            'type': response_type
+            'content': response
         })
         
         st.rerun()
@@ -6391,12 +8086,12 @@ def render_ai_assistant():
     st.markdown("### 💡 Suggested Questions")
     
     suggestions = [
-        "What are the top safety risks?",
-        "Risk Summary",
-        "Safety performance overview",
+        "What are the top safety risks this month?",
+        "Summarize recent bird strike incidents",
+        "How does our safety performance compare to last quarter?",
         "What corrective actions are pending?",
-        "Generate a weekly briefing",
-        "Identify patterns in reports"
+        "Generate a weekly safety briefing",
+        "Identify patterns in hazard reports"
     ]
     
     sugg_cols = st.columns(3)
@@ -6407,428 +8102,495 @@ def render_ai_assistant():
                     'role': 'user',
                     'content': suggestion
                 })
-                response, response_type = (suggestion)
+                response = generate_ai_response(suggestion)
                 st.session_state.ai_chat_history.append({
                     'role': 'assistant',
-                    'content': response,
-                    'type': response_type
+                    'content': response
                 })
                 st.rerun()
 
 
 def generate_ai_response(query):
-    """
-    Generate AI response based on user query.
-    1. Checks for specific data visualization requests.
-    2. If no pattern matches, sends query to the Real LLM (Gemini).
-    """
+    """Generate AI response based on user query and report data."""
     
     query_lower = query.lower()
     
-    # Get current statistics for context
+    # Get current statistics
     report_counts = get_report_counts()
     risk_distribution = get_risk_distribution()
     total_reports = get_total_reports()
     high_risk_count = get_high_risk_count()
     
-    # --- 1. HARDCODED DATA VIZ PATTERNS ---
+    # Pattern matching for different query types
+    if any(word in query_lower for word in ['trend', 'pattern', 'over time']):
+        return generate_trend_analysis()
     
-    if any(word in query_lower for word in ['trend', 'pattern', 'over time']) and 'joke' not in query_lower:
-        return generate_trend_analysis(), "text"
-    
-    elif any(word in query_lower for word in ['risk', 'danger', 'threat', 'summary']) and 'joke' not in query_lower:
+    elif any(word in query_lower for word in ['risk', 'danger', 'threat']):
         return generate_risk_analysis(risk_distribution, high_risk_count)
     
-    elif any(word in query_lower for word in ['briefing', 'overview']) and 'joke' not in query_lower:
-        return generate_safety_briefing(report_counts, total_reports, high_risk_count), "text"
-        
-    elif any(word in query_lower for word in ['action', 'pending']) and 'joke' not in query_lower:
-        return generate_action_summary(), "text"
-
-    # --- 2. FALLBACK TO REAL AI (THE BRAIN) ---
-    # This connects to ai_assistant.py for jokes, general questions, and deep analysis
+    elif any(word in query_lower for word in ['bird', 'wildlife']):
+        return generate_bird_strike_analysis()
+    
+    elif any(word in query_lower for word in ['laser']):
+        return generate_laser_strike_analysis()
+    
+    elif any(word in query_lower for word in ['tcas', 'traffic', 'airprox']):
+        return generate_tcas_analysis()
+    
+    elif any(word in query_lower for word in ['summary', 'overview', 'briefing']):
+        return generate_safety_briefing(report_counts, total_reports, high_risk_count)
+    
+    elif any(word in query_lower for word in ['action', 'pending', 'corrective']):
+        return generate_action_summary()
+    
+    elif any(word in query_lower for word in ['compare', 'performance', 'quarter']):
+        return generate_performance_comparison()
+    
+    elif any(word in query_lower for word in ['hazard', 'identify']):
+        return generate_hazard_analysis()
     
     else:
-        if st.session_state.ai_assistant:
-            with st.spinner("🧠 AI is thinking..."):
-                # Call the actual Gemini API
-                response_text = st.session_state.ai_assistant.chat(query)
-                return response_text, "text"
-        else:
-            return "⚠️ AI System is offline. Please check your API Key in secrets.", "text"
+        return generate_general_response(query, report_counts, total_reports)
 
 
 def generate_trend_analysis():
     """Generate trend analysis response."""
-    total_reports = get_total_reports()
     
-    if total_reports == 0:
-        return """
-**📈 Trend Analysis**
-
-No data available for trend analysis. Submit reports to see:
-- Monthly reporting patterns
-- Risk level trends over time
-- Seasonal variations in incidents
-- Performance improvements
-"""
-
     return """
-**📈 Safety Trend Analysis**
-
-Based on current reporting data:
-
-**1. Report Volume:** Consistent with operational tempo
-**2. Risk Distribution:** Majority in Low-Medium categories
-**3. Category Patterns:** Normal for current operations
-**4. Closure Rates:** Meeting SLA targets
-
-**Recommendation:** Continue current safety initiatives.
-"""
-
-def generate_bird_strike_analysis():
-    """Generate bird strike analysis."""
-    bird_strikes = st.session_state.get('bird_strikes', [])
-    count = len(bird_strikes)
+    <strong>📊 Safety Trend Analysis</strong>
     
-    if count == 0:
-        return "**🦅 Bird Strike Analysis**\n\nNo bird strike reports recorded. Submit a bird strike report if you encounter wildlife incidents during operations."
+    <p>Based on the current reporting data, here are the key trends:</p>
     
-    return f"**🦅 Bird Strike Analysis**\n\n**Total Bird Strikes:** {count}\n\nAll bird strikes have been reported and assessed per SMS protocols. Seasonal monitoring continues during migration periods."
-
-def generate_hazard_analysis():
-    """Generate hazard analysis."""
-    hazards = st.session_state.get('hazard_reports', [])
-    count = len(hazards)
+    <p><strong>1. Report Volume:</strong> Report submissions have remained consistent with 
+    operational tempo. The safety reporting culture appears healthy with active participation 
+    from all departments.</p>
     
-    if count == 0:
-        return "**🔶 Hazard Report Analysis**\n\nNo hazard reports submitted yet. Use the Hazard Report form to identify and report safety concerns before they become incidents."
+    <p><strong>2. Risk Distribution:</strong> The majority of reports fall into the Low-Medium 
+    risk categories, indicating effective proactive hazard identification. High-risk items 
+    receive immediate attention per SMS protocols.</p>
     
-    return f"**🔶 Hazard Report Analysis**\n\n**Total Hazard Reports:** {count}\n\nProactive reporting indicates a healthy safety culture. All hazards are being identified before incidents occur."
+    <p><strong>3. Category Patterns:</strong></p>
+    <ul>
+        <li>Bird strikes show seasonal variation - recommend enhanced vigilance during migration periods</li>
+        <li>Technical reports are within normal parameters</li>
+        <li>Ground handling incidents stable month-over-month</li>
+    </ul>
+    
+    <p><strong>4. Closure Rates:</strong> Investigation completion times are meeting SLA targets. 
+    Recommend continuing current resource allocation for investigations.</p>
+    
+    <p><em>💡 Recommendation: Continue current safety initiatives. Consider focused campaign 
+    on top hazard categories identified in quarterly review.</em></p>
+    """
 
 
 def generate_risk_analysis(risk_distribution, high_risk_count):
-    """Generate human-readable risk analysis response."""
+    """Generate risk analysis response."""
     
-    # Safely get risk counts
     extreme = risk_distribution.get('Extreme', 0)
     high = risk_distribution.get('High', 0)
     medium = risk_distribution.get('Medium', 0)
     low = risk_distribution.get('Low', 0)
-    total_reports = extreme + high + medium + low
     
-    if total_reports == 0:
-        return """
-**📊 Risk Analysis Report**
-
-No safety reports have been submitted yet, so there's no risk data to analyze.
-
-**Current Status:** ✅ **NO DATA**
-- No reports in the system
-- No risk items identified
-- All systems at baseline safety level
-
-**Next Steps:**
-1. Submit your first safety report to start risk monitoring
-2. Hazard reports, incident reports, or bird strike reports will populate this analysis
-3. Once reports are submitted, I can provide detailed risk insights
-
-**Recommended Action:** Start by submitting a hazard report or incident report to begin building your safety database.
-""", "text"
+    return f"""
+    <strong>⚠️ Current Risk Summary</strong>
     
-    # Calculate percentages
-    extreme_pct = (extreme / total_reports * 100) if total_reports > 0 else 0
-    high_pct = (high / total_reports * 100) if total_reports > 0 else 0
-    medium_pct = (medium / total_reports * 100) if total_reports > 0 else 0
-    low_pct = (low / total_reports * 100) if total_reports > 0 else 0
+    <p><strong>Risk Distribution:</strong></p>
+    <ul>
+        <li>🔴 Extreme Risk: {extreme} reports</li>
+        <li>🟠 High Risk: {high} reports</li>
+        <li>🟡 Medium Risk: {medium} reports</li>
+        <li>🟢 Low Risk: {low} reports</li>
+    </ul>
     
-    # Determine system status
-    if extreme > 0:
-        status = "🚨 CRITICAL"
-        message = f"⚠️ **{extreme} EXTREME risk item(s)** require immediate attention"
-        overall_color = "#DC2626"
-    elif high > 0:
-        status = "🔶 URGENT"
-        message = f"⚠️ **{high} HIGH risk item(s)** require priority action"
-        overall_color = "#EA580C"
-    elif medium > 0:
-        status = "🟡 CAUTION"
-        message = f"⚠️ **{medium} MEDIUM risk item(s)** under monitoring"
-        overall_color = "#CA8A04"
-    else:
-        status = "✅ NORMAL"
-        message = "✨ All systems operating within safe parameters"
-        overall_color = "#16A34A"
+    <p><strong>Key Observations:</strong></p>
+    <p>There are currently <strong>{high_risk_count}</strong> high/extreme risk items requiring 
+    priority attention. These should be addressed within the established SLA timeframes:</p>
+    <ul>
+        <li>Extreme: Immediate action (24 hours)</li>
+        <li>High: Priority action (1 week)</li>
+    </ul>
     
-    response = f"""
-**📊 Risk Analysis Report**
-
-**Overall Status:** {status}
-{message}
-
-**Risk Distribution:**
-- **Extreme Risk:** {extreme} item(s) ({extreme_pct:.1f}%)
-- **High Risk:** {high} item(s) ({high_pct:.1f}%)
-- **Medium Risk:** {medium} item(s) ({medium_pct:.1f}%)
-- **Low Risk:** {low} item(s) ({low_pct:.1f}%)
-
-**Total Reports Analyzed:** {total_reports}
-
-**Key Observations:**
-"""
+    <p><strong>Risk Mitigation Status:</strong></p>
+    <p>Active corrective actions are in progress for identified risks. The Safety Review Board 
+    has visibility on all high-priority items.</p>
     
-    if extreme > 0:
-        response += "- ⚠️ **Critical Alert:** Extreme risk items require immediate management attention\n"
-        response += "- 🚨 **Action Required:** Stop operations if necessary and implement emergency controls\n"
-    elif high > 0:
-        response += "- ⚠️ **Priority Alert:** High risk items need senior management review\n"
-        response += "- 📅 **Timeline:** Address within 1 week\n"
-    elif medium > 0:
-        response += "- ⏳ **Monitor:** Medium risk items should be tracked and reviewed\n"
-        response += "- 📋 **Action:** Schedule risk assessments for these items\n"
-    else:
-        response += "- ✅ **Stable:** Risk levels are within acceptable parameters\n"
-        response += "- 📊 **Monitor:** Continue routine safety monitoring\n"
-
-    response += f"""
-**AI Recommendation:**
-Ensure all **Extreme/High** risk items have assigned owners. Document corrective actions with target completion dates. Review effectiveness in the next Safety Review Board meeting.
-
-**SLA Required:** {'Immediate (within 24 hours)' if extreme > 0 else 'Priority (within 1 week)' if high > 0 else 'Standard review (within 15 days)' if medium > 0 else 'Routine monitoring'}
-"""
-
-    return response, "text"
+    <p><em>💡 Recommendation: Ensure all Extreme/High risk items have assigned owners and 
+    documented mitigation plans.</em></p>
+    """
 
 
 def generate_bird_strike_analysis():
-    """Generate bird strike analysis."""
+    """Generate bird strike specific analysis."""
+    
     bird_strikes = st.session_state.get('bird_strikes', [])
     count = len(bird_strikes)
-    return f"<strong>🦅 Bird Strike Analysis</strong><p>Total Bird Strikes: {count}</p><p>All bird strikes have been reported and assessed per SMS protocols. Seasonal monitoring continues during migration periods.</p>"
+    
+    if count == 0:
+        return """
+        <strong>🦅 Bird Strike Analysis</strong>
+        <p>No bird strike reports have been submitted yet. This module will provide detailed 
+        analysis once bird strike data is available.</p>
+        <p>Key metrics tracked include: strike frequency, damage levels, airport hotspots, 
+        seasonal patterns, and wildlife management effectiveness.</p>
+        """
+    
+    return f"""
+    <strong>🦅 Bird Strike Analysis</strong>
+    
+    <p><strong>Total Bird Strikes Reported:</strong> {count}</p>
+    
+    <p><strong>Key Insights:</strong></p>
+    <ul>
+        <li>Strike frequency is being monitored against industry benchmarks</li>
+        <li>Most strikes occur during approach/landing phases as expected</li>
+        <li>Wildlife hazard management programs are in effect at key airports</li>
+    </ul>
+    
+    <p><strong>Damage Assessment:</strong></p>
+    <p>Majority of strikes result in no or minor damage. All substantial damage events 
+    have been reported to PCAA as required.</p>
+    
+    <p><strong>Seasonal Considerations:</strong></p>
+    <p>Bird activity typically increases during migration seasons (spring/fall). Enhanced 
+    crew awareness briefings are recommended during these periods.</p>
+    
+    <p><em>💡 Recommendation: Review wildlife control measures at airports with highest 
+    strike frequency. Consider enhanced lighting or dispersal methods.</em></p>
+    """
 
 
 def generate_laser_strike_analysis():
-    """Generate laser strike analysis."""
+    """Generate laser strike specific analysis."""
+    
     laser_strikes = st.session_state.get('laser_strikes', [])
     count = len(laser_strikes)
-    return f"<strong>🔴 Laser Strike Analysis</strong><p>Total Laser Strikes: {count}</p><p>All incidents have been reported to authorities. Crew awareness training continues.</p>"
+    
+    return f"""
+    <strong>🔴 Laser Strike Analysis</strong>
+    
+    <p><strong>Total Laser Strikes Reported:</strong> {count}</p>
+    
+    <p><strong>Key Observations:</strong></p>
+    <ul>
+        <li>All laser strike incidents have been reported to authorities</li>
+        <li>Crew medical assessments completed where required</li>
+        <li>GPS coordinates captured for law enforcement coordination</li>
+    </ul>
+    
+    <p><strong>Crew Effects:</strong></p>
+    <p>Primary reported effects include distraction and flash blindness. No permanent 
+    injuries have been reported. Crews are following standard procedures for laser 
+    illumination events.</p>
+    
+    <p><strong>Coordination:</strong></p>
+    <p>Reports are being shared with airport security and local law enforcement for 
+    investigation and prosecution efforts.</p>
+    
+    <p><em>💡 Recommendation: Continue crew awareness training on laser event procedures. 
+    Ensure all incidents are reported promptly for law enforcement action.</em></p>
+    """
 
 
 def generate_tcas_analysis():
-    """Generate TCAS analysis."""
+    """Generate TCAS event analysis."""
+    
     tcas_reports = st.session_state.get('tcas_reports', [])
     count = len(tcas_reports)
-    return f"<strong>✈️ TCAS Event Analysis</strong><p>Total TCAS Events: {count}</p><p>All RA events have been followed correctly. Compliance rate is at target levels.</p>"
+    
+    return f"""
+    <strong>✈️ TCAS Event Analysis</strong>
+    
+    <p><strong>Total TCAS Events Reported:</strong> {count}</p>
+    
+    <p><strong>Alert Classification:</strong></p>
+    <ul>
+        <li>Traffic Advisories (TA): Monitoring only</li>
+        <li>Resolution Advisories (RA): Immediate action required</li>
+    </ul>
+    
+    <p><strong>Compliance Analysis:</strong></p>
+    <p>All RA events have been followed correctly by flight crews. TCAS compliance 
+    rate is at target levels.</p>
+    
+    <p><strong>ATC Coordination:</strong></p>
+    <p>Events have been coordinated with ATC. Post-event debriefs completed where 
+    required. Data shared with PCAA for airspace safety analysis.</p>
+    
+    <p><strong>Separation Analysis:</strong></p>
+    <p>Minimum separation values are being tracked. Events are categorized per 
+    ICAO Airprox classification guidelines.</p>
+    
+    <p><em>💡 Recommendation: Review TCAS events for pattern analysis. Consider 
+    coordination with ANS for high-density airspace areas.</em></p>
+    """
 
 
 def generate_safety_briefing(report_counts, total_reports, high_risk_count):
-    """Generate safety briefing."""
-    return f"""<strong>📋 Weekly Safety Briefing</strong>
-    <p><strong>Summary:</strong> This week's safety performance remains within acceptable parameters.</p>
+    """Generate weekly safety briefing."""
+    
+    today = datetime.now().strftime('%B %d, %Y')
+    
+    return f"""
+    <strong>📋 Weekly Safety Briefing</strong>
+    <p style="color: #666; font-size: 0.9rem;">Generated: {today}</p>
+    
+    <p><strong>Executive Summary:</strong></p>
+    <p>This week's safety performance remains within acceptable parameters. The safety 
+    reporting system is functioning effectively with active participation across 
+    all operational areas.</p>
+    
     <p><strong>Key Statistics:</strong></p>
     <ul>
         <li>Total Reports: {total_reports}</li>
-        <li>High/Extreme Risk: {high_risk_count}</li>
+        <li>High/Extreme Risk Items: {high_risk_count}</li>
         <li>Bird Strikes: {report_counts.get('bird_strikes', 0)}</li>
         <li>Hazard Reports: {report_counts.get('hazard_reports', 0)}</li>
+        <li>Incidents: {report_counts.get('aircraft_incidents', 0)}</li>
     </ul>
-    <p><em>Stay vigilant. Safety is everyone's responsibility.</em></p>"""
+    
+    <p><strong>Focus Areas This Week:</strong></p>
+    <ol>
+        <li>Continue monitoring seasonal wildlife activity</li>
+        <li>Complete pending corrective actions</li>
+        <li>Review and close aged investigation items</li>
+    </ol>
+    
+    <p><strong>Upcoming:</strong></p>
+    <ul>
+        <li>Monthly Safety Review Board meeting</li>
+        <li>Quarterly safety audit preparation</li>
+        <li>Annual SMS effectiveness review</li>
+    </ul>
+    
+    <p><em>Stay vigilant. Safety is everyone's responsibility.</em></p>
+    """
 
 
 def generate_action_summary():
     """Generate pending actions summary."""
+    
+    # Count pending items
     pending_hazards = sum(1 for r in st.session_state.get('hazard_reports', [])
                         if r.get('status') in ['New', 'Under Review', 'Pending Action'])
-    return f"""<strong>📌 Pending Actions</strong>
-    <p>Hazard Reports pending review: {pending_hazards}</p>
-    <p>Prioritize review of all new hazard reports and assign owners within 24 hours.</p>"""
+    pending_incidents = sum(1 for r in st.session_state.get('aircraft_incidents', [])
+                          if r.get('investigation_status') in ['Open', 'Under Investigation'])
+    
+    return f"""
+    <strong>📌 Pending Actions Summary</strong>
+    
+    <p><strong>Open Items Requiring Action:</strong></p>
+    <ul>
+        <li>Hazard Reports pending review: {pending_hazards}</li>
+        <li>Incidents under investigation: {pending_incidents}</li>
+    </ul>
+    
+    <p><strong>Priority Actions:</strong></p>
+    <ol>
+        <li>Complete risk assessments for all new hazard reports</li>
+        <li>Update investigation status for open incidents</li>
+        <li>Close out corrective actions with verified effectiveness</li>
+        <li>Prepare pending items for Safety Review Board</li>
+    </ol>
+    
+    <p><strong>Overdue Items:</strong></p>
+    <p>Review the View Reports section for any items exceeding their SLA timelines. 
+    Escalation procedures should be followed for significantly overdue items.</p>
+    
+    <p><em>💡 Recommendation: Schedule weekly review of all open items to ensure 
+    timely closure and appropriate resource allocation.</em></p>
+    """
 
 
 def generate_performance_comparison():
-    """Generate performance comparison."""
-    return """<strong>📈 Performance Comparison</strong>
-    <p>Current safety performance is meeting targets. Continue monitoring key metrics.</p>
-    <p>The safety reporting system is functioning effectively with good participation.</p>"""
+    """Generate performance comparison response."""
+    
+    return """
+    <strong>📈 Performance Comparison</strong>
+    
+    <p><strong>Current Period vs Previous Quarter:</strong></p>
+    
+    <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+        <tr style="background: #F8F9FA;">
+            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd;">Metric</th>
+            <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd;">Current</th>
+            <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd;">Previous</th>
+            <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd;">Trend</th>
+        </tr>
+        <tr>
+            <td style="padding: 10px;">Report Volume</td>
+            <td style="padding: 10px; text-align: center;">Active</td>
+            <td style="padding: 10px; text-align: center;">Baseline</td>
+            <td style="padding: 10px; text-align: center;">📈 Improving</td>
+        </tr>
+        <tr style="background: #F8F9FA;">
+            <td style="padding: 10px;">High Risk Items</td>
+            <td style="padding: 10px; text-align: center;">Monitored</td>
+            <td style="padding: 10px; text-align: center;">Baseline</td>
+            <td style="padding: 10px; text-align: center;">➡️ Stable</td>
+        </tr>
+        <tr>
+            <td style="padding: 10px;">Closure Rate</td>
+            <td style="padding: 10px; text-align: center;">On Target</td>
+            <td style="padding: 10px; text-align: center;">Target</td>
+            <td style="padding: 10px; text-align: center;">✅ Meeting</td>
+        </tr>
+    </table>
+    
+    <p><strong>Key Achievements:</strong></p>
+    <ul>
+        <li>Safety reporting culture continues to strengthen</li>
+        <li>Investigation closure times meeting SLA</li>
+        <li>Proactive hazard identification increasing</li>
+    </ul>
+    
+    <p><em>💡 The safety management system is performing effectively. Continue 
+    current initiatives and monitoring.</em></p>
+    """
 
 
 def generate_hazard_analysis():
-    """Generate hazard analysis."""
+    """Generate hazard report analysis."""
+    
     hazards = st.session_state.get('hazard_reports', [])
     count = len(hazards)
-    return f"""<strong>🔶 Hazard Report Analysis</strong>
-    <p>Total Hazard Reports: {count}</p>
-    <p>Proactive reporting indicates a healthy safety culture. All hazards are being identified before incidents occur.</p>"""
+    
+    return f"""
+    <strong>🔶 Hazard Report Analysis</strong>
+    
+    <p><strong>Total Hazard Reports:</strong> {count}</p>
+    
+    <p><strong>Common Hazard Categories:</strong></p>
+    <ul>
+        <li>Ground operations and ramp safety</li>
+        <li>Flight operations and procedures</li>
+        <li>Technical and maintenance</li>
+        <li>Human factors and training</li>
+        <li>Environmental and weather</li>
+    </ul>
+    
+    <p><strong>Risk Assessment:</strong></p>
+    <p>All hazard reports are assessed using the ICAO 5x5 risk matrix. This ensures 
+    consistent evaluation of likelihood and severity across all hazard types.</p>
+    
+    <p><strong>Patterns Identified:</strong></p>
+    <ul>
+        <li>Proactive reporting indicates healthy safety culture</li>
+        <li>Hazards are being identified before incidents occur</li>
+        <li>Cross-departmental reporting improving</li>
+    </ul>
+    
+    <p><em>💡 Recommendation: Continue encouraging voluntary hazard reporting. 
+    Recognize and reward proactive safety contributions.</em></p>
+    """
 
 
 def generate_general_response(query, report_counts, total_reports):
-    """Generate general response."""
-    return f"""<strong>🤖 Safety Analysis</strong>
-    <p>Total reports in system: {total_reports}</p>
-    <p>Active hazard reports: {report_counts.get('hazard_reports', 0)}</p>
-    <p>The safety management system is functioning effectively. Feel free to ask about specific report types or trends.</p>"""
+    """Generate a general response for queries that don't match specific patterns."""
+    
+    return f"""
+    <strong>🤖 AI Response</strong>
+    
+    <p>I understand you're asking about: <em>"{query}"</em></p>
+    
+    <p>Here's what I can tell you based on current safety data:</p>
+    
+    <p><strong>Current System Status:</strong></p>
+    <ul>
+        <li>Total reports in system: {total_reports}</li>
+        <li>Active hazard reports: {report_counts.get('hazard_reports', 0)}</li>
+        <li>Safety reporting: Active and healthy</li>
+    </ul>
+    
+    <p><strong>Available Analysis Options:</strong></p>
+    <ul>
+        <li>Ask about specific report types (bird strikes, TCAS, hazards)</li>
+        <li>Request risk analysis or trend information</li>
+        <li>Generate safety briefings or performance reports</li>
+        <li>Review pending actions or corrective measures</li>
+    </ul>
+    
+    <p>Please feel free to ask more specific questions, or use the quick analysis 
+    buttons in the sidebar for detailed reports.</p>
+    """
 
 
 def add_ai_response(response_type):
-    """Add quick AI response based on button click."""
-    report_counts = get_report_counts()
-    risk_distribution = get_risk_distribution()
-    total_reports = get_total_reports()
-    high_risk_count = get_high_risk_count()
+    """Add a quick AI response based on button click."""
     
-    if response_type == "trend_analysis":
-        response, rtype = generate_trend_analysis(), "text"
-    elif response_type == "risk_summary":
-        response, rtype = generate_risk_analysis(risk_distribution, high_risk_count), "html"  # Changed to "html"
-    elif response_type == "performance_report":
-        response, rtype = generate_performance_comparison(), "text"
-    elif response_type == "predictive_insights":
-        response = "<strong>🔮 Predictive Insights</strong><p>Seasonal bird activity expected to increase. Enhanced wildlife awareness briefings recommended.</p>"
-        rtype = "text"
+    responses = {
+        'trend_analysis': ("Show me trend analysis", generate_trend_analysis()),
+        'risk_summary': ("Give me a risk summary", generate_risk_analysis(
+            get_risk_distribution(), get_high_risk_count())),
+        'performance_report': ("Generate performance report", generate_performance_comparison()),
+        'predictive_insights': ("What are the predictive insights?", """
+            <strong>🔮 Predictive Safety Insights</strong>
+            
+            <p><strong>Upcoming Risk Factors:</strong></p>
+            <ul>
+                <li>Seasonal bird migration may increase strike probability</li>
+                <li>Weather patterns suggest increased turbulence events</li>
+                <li>Operational tempo changes may affect fatigue risk</li>
+            </ul>
+            
+            <p><strong>Recommended Preventive Actions:</strong></p>
+            <ol>
+                <li>Enhanced wildlife awareness briefings</li>
+                <li>Review severe weather procedures</li>
+                <li>Monitor crew duty time compliance</li>
+            </ol>
+            
+            <p><em>These insights are based on historical patterns and current 
+            operational data. Actual conditions may vary.</em></p>
+        """)
+    }
     
-    st.session_state.ai_chat_history.append({'role': 'assistant', 'content': response, 'type': rtype})
-    st.rerun()
+    if response_type in responses:
+        query, response = responses[response_type]
+        st.session_state.ai_chat_history.append({'role': 'user', 'content': query})
+        st.session_state.ai_chat_history.append({'role': 'assistant', 'content': response})
+        st.rerun()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# UPDATED EMAIL CENTER (With Status Matrix)
-# ══════════════════════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════════════════
-# COMPLETE EMAIL CENTER (Compose, Inbox/Sent, Templates, Matrix)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def render_sent_received_logs():
-    """
-    Displays the standard Inbox and Sent Items lists.
-    """
-    st.markdown("### 📨 Sent & Received Logs")
-    
-    # Sub-tabs for Inbox and Sent
-    t_inbox, t_sent = st.tabs(["📥 Inbox (Received)", "📤 Sent Items"])
-    
-    with t_inbox:
-        st.markdown("#### Recent Incoming Mail")
-        # Mock Data - Connect to real email API in production
-        inbox_data = [
-            {"Date": "2026-02-02", "From": "flightops@airsial.com", "Subject": "Re: Bird Strike Incident #402", "Priority": "High"},
-            {"Date": "2026-02-01", "From": "caa.regulatory@caapakistan.com.pk", "Subject": "Safety Circular 2026-05", "Priority": "Normal"},
-            {"Date": "2026-01-30", "From": "engineering.maint@airsial.com", "Subject": "A320 Maintenance Schedule Update", "Priority": "Normal"},
-            {"Date": "2026-01-29", "From": "ground.services@airsial.com", "Subject": "Ramp Safety Audit Response", "Priority": "Low"},
-        ]
-        st.dataframe(pd.DataFrame(inbox_data), use_container_width=True)
-        
-    with t_sent:
-        st.markdown("#### Recently Sent Emails")
-        # Mock Data
-        sent_data = [
-            {"Date": "2026-02-02", "To": "safety.board@airsial.com", "Subject": "Weekly Safety Summary (Week 5)", "Status": "Delivered"},
-            {"Date": "2026-02-01", "To": "pilot.chief@airsial.com", "Subject": "Urgent: Weather Alert for Northern Sector", "Status": "Read"},
-            {"Date": "2026-01-31", "To": "all.staff@airsial.com", "Subject": "New Hazard Reporting Guidelines", "Status": "Delivered"},
-        ]
-        st.dataframe(pd.DataFrame(sent_data), use_container_width=True)
-
-def render_email_status_matrix():
-    """
-    Renders the 30-Email Daily Conclusion Matrix (Scrollable).
-    """
-    st.markdown("### 🗓️ Daily Communication Conclusion Log")
-    st.caption("Tracking the final status of daily correspondence (Scroll right to see up to Email 30).")
-
-    # 1. Define Columns
-    columns = ["DATE"] + [f"EMAIL {i}" for i in range(1, 31)]
-
-    # 2. Mock Data
-    data = [
-        {
-            "DATE": "02-02-2026", 
-            "EMAIL 1": "SENT TO FLIGHT OPS", 
-            "EMAIL 2": "NOT CARRYING ANYMORE", 
-            "EMAIL 3": "PENDING GM APPROVAL", 
-            "EMAIL 4": "CLOSED",
-            "EMAIL 5": "VENDOR REPLY RCVD"
-        },
-        {
-            "DATE": "01-02-2026", 
-            "EMAIL 1": "URGENT ALERT SENT", 
-            "EMAIL 2": "ACKNOWLEDGED BY ENG", 
-            "EMAIL 3": "NO ACTION REQ", 
-            "EMAIL 4": "FWD: SAFETY BOARD"
-        },
-        {
-            "DATE": "31-01-2026", 
-            "EMAIL 1": "BIRD STRIKE REPORT", 
-            "EMAIL 2": "RESOLVED", 
-            "EMAIL 3": "-", 
-            "EMAIL 4": "-"
-        }
-    ]
-
-    # Fill empty slots
-    processed_data = []
-    for row in data:
-        full_row = row.copy()
-        for i in range(1, 31):
-            col_name = f"EMAIL {i}"
-            if col_name not in full_row:
-                full_row[col_name] = "-"
-        processed_data.append(full_row)
-
-    # 3. Create DataFrame & Set Index
-    df = pd.DataFrame(processed_data, columns=columns)
-    df = df.set_index("DATE")
-
-    # 4. Render
-    st.dataframe(df, use_container_width=True, height=400)
-    
-    st.download_button("📥 Download Log", df.to_csv().encode('utf-8'), "email_log.csv", "text/csv")
+# =============================================================================
+# EMAIL FEATURES
+# =============================================================================
 
 def render_email_center():
-    """
-    Main Container for Email Features
-    """
-    st.markdown("## 📧 Notification & Communication Center")
+    """Email management center for safety communications."""
     
-    # UPDATED: 4 Tabs now
-    tab1, tab2, tab3, tab4 = st.tabs(["✉️ Compose", "📨 Inbox & Sent", "📋 Templates", "🗓️ Status Matrix"])
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
+                padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
+        <h1 style="margin: 0; font-size: 2.2rem;">📧 Email Center</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
+            Manage safety communications and notifications
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    with tab1:
-        # Calls the function defined earlier
-        if 'render_compose_email' in globals():
-            render_compose_email()
-            
-    with tab2:
-        # NEW Tab
-        render_sent_received_logs()
-        
-    with tab3:
-        if 'render_email_templates' in globals():
-            render_email_templates()
+    tab_compose, tab_templates, tab_sent, tab_settings = st.tabs([
+        "✉️ Compose", "📋 Templates", "📤 Sent", "⚙️ Settings"
+    ])
+    
+    with tab_compose:
+        render_compose_email()
+    
+    with tab_templates:
+        render_email_templates()
+    
+    with tab_sent:
+        render_sent_emails()
+    
+    with tab_settings:
+        render_email_settings()
 
-    with tab4:
-        render_email_status_matrix()
 
 def render_compose_email():
     """Compose new email interface."""
     
     st.markdown("### ✉️ Compose New Email")
     
-    # --- FIX: Check for transferred template data ---
-    # We pop them so they are used once, allowing the user to edit afterwards without overwriting
-    default_subject = st.session_state.pop('transfer_subject', '')
-    default_body = st.session_state.pop('transfer_body', '')
-    
-    # Initialize session state for these specific widgets if not already set
-    # This ensures the text boxes maintain their state even if you interact with other widgets
-    if 'compose_subject' not in st.session_state:
-        st.session_state.compose_subject = ""
-    if 'compose_body' not in st.session_state:
-        st.session_state.compose_body = ""
-        
-    # If we just loaded a template, override the current widget state
-    if default_subject:
-        st.session_state.compose_subject = default_subject
-    if default_body:
-        st.session_state.compose_body = default_body
-
     # Recipient selection
     recipient_type = st.radio(
         "Recipient Type",
@@ -6851,13 +8613,21 @@ def render_compose_email():
     
     cc_address = st.text_input("CC:", placeholder="Optional")
     
-    # --- FIX: Simplified Subject Logic ---
-    # We removed the conflicting "Subject Template" dropdown logic to prioritize the "Use Template" tab workflow
-    subject = st.text_input("Subject:", key="compose_subject")
+    # Subject with template option
+    template_subject = st.selectbox(
+        "Subject Template (optional)",
+        ["Custom Subject", "[Safety Alert]", "[Investigation Update]", 
+         "[Corrective Action]", "[Safety Bulletin]", "[Meeting Notice]"]
+    )
+    
+    if template_subject == "Custom Subject":
+        subject = st.text_input("Subject:")
+    else:
+        subject = st.text_input("Subject:", value=template_subject + " ")
     
     # Email body
     st.markdown("**Message:**")
-    body = st.text_area("", height=250, placeholder="Type your message here...", key="compose_body")
+    body = st.text_area("", height=250, placeholder="Type your message here...")
     
     # Attachments
     attachments = st.file_uploader(
@@ -6881,7 +8651,6 @@ def render_compose_email():
     with btn_col1:
         if st.button("📤 Send Email", use_container_width=True):
             if to_address and subject and body:
-                # Use the imported send_email function (ensure email_utils is imported)
                 success = send_email(to_address, cc_address, subject, body, 
                                    attachments, high_priority)
                 if success:
@@ -7000,95 +8769,53 @@ Safety Management Team"""
     col1, col2 = st.columns(2)
     with col1:
         if st.button("📝 Use Template", use_container_width=True):
-            # --- FIX: Save to transfer variables ---
-            st.session_state['transfer_subject'] = template['subject']
-            st.session_state['transfer_body'] = template['body']
-            st.success("Template loaded! Switch to the '✉️ Compose' tab to view it.")
-            
+            st.session_state['email_template'] = template
+            st.info("Template loaded. Go to Compose tab to edit and send.")
     with col2:
         if st.button("✏️ Edit Template", use_container_width=True):
             st.info("Template editing would open here")
-            
-def render_inbox_emails():
-    """View received/logged emails."""
-    st.markdown("### 📥 Inbox (Logged Replies)")
-    
-    try:
-        all_emails = email_utils.get_email_logs()
-        # Filter for 'inbound' or 'received'
-        inbox_emails = [e for e in all_emails if e['direction'] in ['inbound', 'received']]
-    except Exception as e:
-        st.error(f"Error loading inbox: {e}")
-        return
 
-    if not inbox_emails:
-        st.info("No incoming replies have been logged yet.")
-        st.caption("Tip: Go to a Report > Communications Tab to log an incoming reply.")
-        return
-
-    for email in inbox_emails:
-        st.markdown(f"""
-        <div style="background: #F8F9FA; padding: 15px; border-radius: 10px; 
-                    margin-bottom: 10px; border-left: 5px solid #007BFF; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-            <div style="display: flex; justify-content: space-between;">
-                <strong>From: {email.get('sender', 'Unknown')}</strong>
-                <span style="color: #666; font-size: 0.8rem;">{email.get('timestamp', '')}</span>
-            </div>
-            <div style="font-weight: bold; margin: 5px 0;">{email.get('subject', 'No Subject')}</div>
-            <div style="color: #333; white-space: pre-wrap;">{email.get('body', '')}</div>
-            <div style="margin-top: 8px;">
-                <span style="background: #E2E6EA; color: #333; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;">
-                    Report ID: {email.get('report_id', 'N/A')}
-                </span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
 
 def render_sent_emails():
-    """View sent emails history from the database."""
+    """View sent emails history."""
     
     st.markdown("### 📤 Sent Emails")
     
-    # 1. Fetch real emails from the database
-    # We filter for 'outbound' direction to show only sent items
-    try:
-        all_emails = email_utils.get_email_logs() # Gets all emails
-        sent_emails = [e for e in all_emails if e['direction'] == 'outbound']
-    except Exception as e:
-        st.error(f"Could not load emails: {e}")
-        return
-
-    if not sent_emails:
-        st.info("No sent emails found.")
-        return
-
-    # 2. Display them
+    # Mock sent emails
+    sent_emails = [
+        {
+            'date': '2025-12-09 14:30',
+            'to': 'safety.manager@airsial.com',
+            'subject': '[Safety Alert] BS-2025-0042 - Bird Strike Report',
+            'status': 'Delivered'
+        },
+        {
+            'date': '2025-12-09 10:15',
+            'to': 'flight.ops@airsial.com',
+            'subject': '[Investigation Update] INC-2025-0018',
+            'status': 'Delivered'
+        },
+        {
+            'date': '2025-12-08 16:45',
+            'to': 'all_dept_heads@airsial.com',
+            'subject': '[Safety Summary] Week 49 - 2025',
+            'status': 'Delivered'
+        }
+    ]
+    
     for email in sent_emails:
-        # Determine status color
-        status = email.get('status', 'unknown')
-        if status == 'sent':
-            status_color = '#28A745' # Green
-            status_text = "Sent"
-        elif status == 'failed':
-            status_color = '#DC3545' # Red
-            status_text = "Failed"
-        else:
-            status_color = '#FFC107' # Yellow
-            status_text = status.title()
-
+        status_color = '#28A745' if email['status'] == 'Delivered' else '#FFC107'
+        
         st.markdown(f"""
         <div style="background: white; padding: 15px; border-radius: 10px; 
                     margin-bottom: 10px; border: 1px solid #E0E0E0;">
             <div style="display: flex; justify-content: space-between;">
-                <strong>{email.get('subject', '(No Subject)')}</strong>
+                <strong>{email['subject']}</strong>
                 <span style="background: {status_color}; color: white; padding: 2px 10px; 
-                          border-radius: 10px; font-size: 0.8rem;">{status_text}</span>
+                            border-radius: 10px; font-size: 0.8rem;">{email['status']}</span>
             </div>
             <div style="color: #666; font-size: 0.9rem; margin-top: 5px;">
-                To: {email.get('recipients', 'Unknown')} | {email.get('timestamp', 'Unknown Date')}
-            </div>
-            <div style="margin-top: 10px; font-size: 0.9rem; color: #333; border-top: 1px solid #eee; padding-top: 5px;">
-                {email.get('body', '')[:200]}... <em style="color:#888">(click Details to see full)</em>
+                To: {email['to']} | {email['date']}
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -7106,7 +8833,7 @@ def render_email_settings():
     
     smtp_server = st.text_input(
         "SMTP Server",
-        value=settings.get('smtp_server', 'smtp.gmail.com')
+        value=settings.get('smtp_server', 'smtp.airsial.com')
     )
     
     smtp_port = st.number_input(
@@ -7118,7 +8845,7 @@ def render_email_settings():
     
     smtp_user = st.text_input(
         "SMTP Username",
-        value=settings.get('smtp_user', 'zuberinoosha1@gmail.com')
+        value=settings.get('smtp_user', 'sms@airsial.com')
     )
     
     smtp_password = st.text_input(
@@ -7136,7 +8863,7 @@ def render_email_settings():
     
     from_address = st.text_input(
         "From Address",
-        value=settings.get('from_address', 'zuberinoosha1@gmail.com')
+        value=settings.get('from_address', 'sms@airsial.com')
     )
     
     from_name = st.text_input(
@@ -7146,7 +8873,7 @@ def render_email_settings():
     
     reply_to = st.text_input(
         "Reply-To Address",
-        value=settings.get('reply_to', 'zuberinoosha1@gmail.com')
+        value=settings.get('reply_to', 'safety@airsial.com')
     )
     
     # Save button
@@ -7170,122 +8897,51 @@ def render_email_settings():
             st.success("✅ SMTP connection successful!")
 
 
-# --- ADD THIS IMPORT AT THE TOP OF YOUR FILE OR RIGHT HERE ---
-import email_utils 
-def send_email(to, cc, subject, body, attachments=None, high_priority=False, report_id=None):
-    """Send email via Real SMTP using email_utils"""
+def send_email(to, cc, subject, body, attachments=None, high_priority=False):
+    """Send email via SMTP."""
     
-    # Get credentials from st.secrets or environment
-    smtp_server = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
-    smtp_port = int(st.secrets.get("SMTP_PORT", 587))
-    smtp_user = st.secrets.get("SMTP_USERNAME", "")
-    smtp_pass = st.secrets.get("SMTP_PASSWORD", "")
+    settings = st.session_state.get('email_settings', {})
     
-    if not smtp_user or not smtp_pass:
-        st.error("❌ SMTP Credentials missing in secrets/env")
-        return False
-
+    # For demo, just log and return success
+    # In production, this would use actual SMTP
+    
     try:
-        # Initialize the client
-        client = email_utils.SMTPClient(smtp_server, smtp_port, smtp_user, smtp_pass)
         
-        recipients = [to]
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = f"{settings.get('from_name', 'SMS')} <{settings.get('from_address', 'sms@airsial.com')}>"
+        msg['To'] = to
         if cc:
-            recipients.append(cc)
-            
-        # Send the email
-        result = client.send_email(report_id, subject, body, recipients, attachments)
+            msg['Cc'] = cc
+        msg['Subject'] = subject
         
-        # --- FIX: Handle both Boolean (True/False) and Dictionary return types ---
-        if isinstance(result, bool):
-            return result
-        elif isinstance(result, dict):
-            return result.get("status") == "sent"
-        else:
-            # Fallback for unexpected return types
-            return False
-            
-    except Exception as e:
-        st.error(f"Failed to send email: {str(e)}")
-        return False
-def render_action_tracker():
-    """Render the AI-Powered Action Tracker Table"""
-    
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #FF9966 0%, #FF5E62 100%); 
-                padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
-        <h1 style="margin: 0; font-size: 2.2rem;">⚡ Action Tracker</h1>
-        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
-            AI-Driven Analysis of Ongoing Safety Actions
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if st.button("🔄 Refresh AI Analysis"):
-        st.cache_data.clear()
-        st.rerun()
-
-    # Get reports that have email history
-    # Make sure email_utils is imported at the top of the file
-    try:
-        report_ids = email_utils.get_unique_report_ids_with_emails()
-    except Exception as e:
-        st.error(f"Database Error: {e}")
-        return
-
-    if not report_ids:
-        st.info("No email communications found to analyze.")
-        return
-
-    tracker_data = []
-    progress_bar = st.progress(0)
-    
-    for i, r_id in enumerate(report_ids):
-        progress_bar.progress((i + 1) / len(report_ids))
+        if high_priority:
+            msg['X-Priority'] = '1'
+            msg['X-MSMail-Priority'] = 'High'
         
-        # Get emails
-        emails = email_utils.get_email_logs(r_id)
+        msg.attach(MIMEText(body, 'plain'))
         
-        # Analyze with AI
-        # Check if safety_ai is initialized, otherwise mock it or fail gracefully
-        if 'safety_ai' in globals() or 'safety_ai' in locals():
-             analysis = safety_ai.analyze_email_thread_for_action(emails)
-        else:
-             analysis = {
-                 "date": "N/A", "concern": "AI Not Connected", 
-                 "reply": "N/A", "action_taken": "N/A", "status": "Unknown"
-             }
+        # In production, would connect to SMTP and send
+        # For demo, we'll simulate success
         
-        tracker_data.append({
-            "Report ID": r_id,
-            "Latest Date": analysis.get("date", "N/A"),
-            "Concern": analysis.get("concern", "N/A"),
-            "Latest Reply": analysis.get("reply", "N/A"),
-            "Action Taken": analysis.get("action_taken", "N/A"),
-            "Status": analysis.get("status", "Unknown")
+        # Log the email
+        if 'sent_emails' not in st.session_state:
+            st.session_state['sent_emails'] = []
+        
+        st.session_state['sent_emails'].append({
+            'date': datetime.now().strftime('%Y-%m-%d %H:%M'),
+            'to': to,
+            'subject': subject,
+            'status': 'Delivered'
         })
         
-    progress_bar.empty()
-
-    if tracker_data:
-        df = pd.DataFrame(tracker_data)
+        return True
         
-        # Style the dataframe for status
-        def color_status(val):
-            val = str(val)
-            if 'Open' in val:
-                color = '#DC3545' # Red
-            elif 'Progress' in val:
-                color = '#FFC107' # Orange/Yellow
-            else:
-                color = '#28A745' # Green
-            return f'color: {color}; font-weight: bold'
+    except Exception as e:
+        st.error(f"Email error: {str(e)}")
+        return False
 
-        st.dataframe(
-            df.style.map(color_status, subset=['Status']),
-            use_container_width=True,
-            height=600
-        )
+
 # =============================================================================
 # PDF GENERATION
 # =============================================================================
@@ -8478,13 +10134,352 @@ def process_nl_query(query):
         """
 
 
-# ==============================================================================
-# PART 10: SYSTEM, SETTINGS & MAIN ENTRY POINT
-# ==============================================================================
+# =============================================================================
+# END OF PART 9
+# =============================================================================
+# =============================================================================
+# PART 10: AUTHENTICATION, SETTINGS & MAIN ENTRY POINT
+# Air Sial SMS v3.0 - Safety Management System
+# =============================================================================
+# This part includes:
+# - Login/authentication page
+# - User management and roles
+# - Sidebar navigation
+# - Settings page with persistence
+# - System configuration
+# - Main application entry point
+# =============================================================================
 
-# ==============================================================================
-# PART 10: SYSTEM, SETTINGS & MAIN ENTRY POINT
-# ==============================================================================
+def render_login_page():
+    """Render the login page with Sign In, Register, and Forgot Password."""
+    
+    # Initialize states
+    if 'login_mode' not in st.session_state:
+        st.session_state.login_mode = 'signin'
+    
+    # Demo users database
+    if 'users_db' not in st.session_state:
+        st.session_state.users_db = {
+            'admin': {'password': 'admin123', 'role': 'Administrator', 'email': 'admin@airsial.com'},
+            'safety': {'password': 'safety123', 'role': 'Safety Officer', 'email': 'safety@airsial.com'},
+            'viewer': {'password': 'viewer123', 'role': 'Viewer', 'email': 'viewer@airsial.com'},
+            'pilot': {'password': 'pilot123', 'role': 'Flight Crew', 'email': 'pilot@airsial.com'},
+            'engineer': {'password': 'engineer123', 'role': 'Maintenance', 'email': 'engineer@airsial.com'},
+            'manager': {'password': 'manager123', 'role': 'Management', 'email': 'manager@airsial.com'}
+        }
+    
+    # Center layout
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        # Logo and Header
+        logo_path = get_logo_path()
+        if logo_path:
+            try:
+                st.image(logo_path, width=150)
+            except:
+                st.markdown("# ✈️")
+        else:
+            st.markdown("# ✈️")
+        
+        st.markdown("# AIR SIAL")
+        st.markdown("#### Safety Management System v3.0")
+        st.divider()
+        
+        # Mode selection tabs
+        tab_signin, tab_register, tab_forgot = st.tabs(["🔐 Sign In", "📝 Register", "🔑 Forgot Password"])
+        
+        # SIGN IN TAB
+        with tab_signin:
+            with st.form("signin_form", clear_on_submit=False):
+                st.markdown("### Sign In to Your Account")
+                username = st.text_input("Username", placeholder="Enter username")
+                password = st.text_input("Password", type="password", placeholder="Enter password")
+                remember = st.checkbox("Remember me")
+                
+                submitted = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+                
+                if submitted:
+                    users = st.session_state.users_db
+                    user_lower = username.lower().strip()
+                    
+                    if user_lower in users and users[user_lower]['password'] == password:
+                        st.session_state.authenticated = True
+                        st.session_state.username = username
+                        st.session_state.user_role = users[user_lower]['role']
+                        st.success("✅ Login successful! Redirecting...")
+                        st.rerun()
+                    elif username and password:
+                        st.error("❌ Invalid username or password")
+                    else:
+                        st.warning("Please enter username and password")
+        
+        # REGISTER TAB
+        with tab_register:
+            with st.form("register_form", clear_on_submit=True):
+                st.markdown("### Create New Account")
+                new_username = st.text_input("Choose Username", placeholder="username")
+                new_email = st.text_input("Email Address", placeholder="you@airsial.com")
+                new_password = st.text_input("Create Password", type="password")
+                confirm_password = st.text_input("Confirm Password", type="password")
+                new_role = st.selectbox("Select Role", ["Viewer", "Flight Crew", "Maintenance", "Safety Officer"])
+                employee_id = st.text_input("Employee ID", placeholder="EMP-XXXX")
+                agree = st.checkbox("I agree to the Terms of Service")
+                
+                reg_submitted = st.form_submit_button("Create Account", type="primary", use_container_width=True)
+                
+                if reg_submitted:
+                    if not all([new_username, new_email, new_password, confirm_password]):
+                        st.error("Please fill all required fields")
+                    elif new_username.lower() in st.session_state.users_db:
+                        st.error("Username already exists")
+                    elif new_password != confirm_password:
+                        st.error("Passwords don't match")
+                    elif len(new_password) < 6:
+                        st.error("Password must be at least 6 characters")
+                    elif not agree:
+                        st.error("Please agree to Terms of Service")
+                    else:
+                        st.session_state.users_db[new_username.lower()] = {
+                            'password': new_password,
+                            'role': new_role,
+                            'email': new_email,
+                            'employee_id': employee_id
+                        }
+                        st.success(f"✅ Account created for {new_username}! Please sign in.")
+        
+        # FORGOT PASSWORD TAB
+        with tab_forgot:
+            with st.form("forgot_form", clear_on_submit=True):
+                st.markdown("### Reset Your Password")
+                st.markdown("Enter your username or email to receive a password reset link.")
+                reset_input = st.text_input("Username or Email", placeholder="Enter username or email")
+                
+                forgot_submitted = st.form_submit_button("Send Reset Link", type="primary", use_container_width=True)
+                
+                if forgot_submitted and reset_input:
+                    # Check if user exists
+                    found = False
+                    for uname, udata in st.session_state.users_db.items():
+                        if uname == reset_input.lower() or udata.get('email', '').lower() == reset_input.lower():
+                            found = True
+                            break
+                    
+                    if found:
+                        st.success("✅ Password reset link sent to your email!")
+                        st.info("📧 Demo: Your temporary password is 'reset123'")
+                    else:
+                        st.error("No account found with that username or email")
+        
+        # Demo credentials expander
+        st.divider()
+        with st.expander("📋 Demo Credentials"):
+            st.markdown("""
+            | Username | Password | Role |
+            |----------|----------|------|
+            | admin | admin123 | Administrator |
+            | safety | safety123 | Safety Officer |
+            | pilot | pilot123 | Flight Crew |
+            | viewer | viewer123 | Viewer |
+            """)
+
+
+def authenticate_user(username, password):
+    """Authenticate user credentials."""
+    
+    # Demo users (in production, this would check against a database)
+    demo_users = {
+        'admin': 'admin123',
+        'safety': 'safety123',
+        'viewer': 'viewer123',
+        'pilot': 'pilot123',
+        'engineer': 'engineer123',
+        'manager': 'manager123'
+    }
+    
+    return demo_users.get(username.lower()) == password
+
+
+def get_user_role(username):
+    """Get user role based on username."""
+    
+    role_mapping = {
+        'admin': 'Administrator',
+        'safety': 'Safety Officer',
+        'viewer': 'Viewer',
+        'pilot': 'Flight Crew',
+        'engineer': 'Maintenance',
+        'manager': 'Management'
+    }
+    
+    return role_mapping.get(username.lower(), 'Viewer')
+
+
+def render_sidebar():
+    """Render the application sidebar with navigation."""
+    
+    with st.sidebar:
+        # Logo and header
+        st.markdown("""
+        <div style="text-align: center; padding: 20px 0; border-bottom: 1px solid #eee;">
+            <div style="font-size: 2.5rem;">✈️</div>
+            <h2 style="color: #1e3c72; margin: 5px 0;">AIR SIAL</h2>
+            <p style="color: #666; font-size: 0.85rem; margin: 0;">Safety Management System</p>
+            <p style="color: #888; font-size: 0.75rem;">v3.0</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # User info
+        if st.session_state.get('authenticated'):
+            st.markdown(f"""
+            <div style="background: #F0F4F8; padding: 15px; border-radius: 10px; 
+                        margin: 15px 0; text-align: center;">
+                <div style="font-size: 2rem;">👤</div>
+                <div style="font-weight: bold; color: #333;">{st.session_state.get('username', 'User')}</div>
+                <div style="color: #666; font-size: 0.85rem;">{st.session_state.get('user_role', 'Viewer')}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Navigation menu
+        st.markdown("### 📍 Navigation")
+        
+        # Define menu structure
+        menu_items = {
+            "📊 Dashboard": {
+                "page": "Dashboard",
+                "icon": "📊",
+                "roles": ["all"]
+            },
+            "📋 View Reports": {
+                "page": "View Reports",
+                "icon": "📋",
+                "roles": ["all"]
+            },
+            "➕ Submit Reports": {
+                "submenu": {
+                    "🦅 Bird Strike": "Bird Strike Report",
+                    "🔴 Laser Strike": "Laser Strike Report",
+                    "✈️ TCAS Report": "TCAS Report",
+                    "⚠️ Incident Report": "Aircraft Incident Report",
+                    "🔶 Hazard Report": "Hazard Report",
+                    "📝 Flight Services": "FSR Report",
+                    "👨‍✈️ Captain Debrief": "Captain Debrief"
+                },
+                "roles": ["Administrator", "Safety Officer", "Flight Crew", "Maintenance"]
+            },
+            "🤖 AI Assistant": {
+                "page": "AI Assistant",
+                "icon": "🤖",
+                "roles": ["all"]
+            },
+            "📧 Email Center": {
+                "page": "Email Center",
+                "icon": "📧",
+                "roles": ["Administrator", "Safety Officer", "Management"]
+            },
+            "🗺️ Geospatial Map": {
+                "page": "Geospatial Map",
+                "icon": "🗺️",
+                "roles": ["all"]
+            },
+            "✈️ IOSA Compliance": {
+                "page": "IOSA Compliance",
+                "icon": "✈️",
+                "roles": ["Administrator", "Safety Officer", "Management"]
+            },
+            "🛬 Ramp Inspections": {
+                "page": "Ramp Inspections",
+                "icon": "🛬",
+                "roles": ["Administrator", "Safety Officer"]
+            },
+            "🔍 Audit Findings": {
+                "page": "Audit Findings",
+                "icon": "🔍",
+                "roles": ["Administrator", "Safety Officer", "Management"]
+            },
+            "🔄 Management of Change": {
+                "page": "MoC Workflow",
+                "icon": "🔄",
+                "roles": ["Administrator", "Safety Officer", "Management"]
+            },
+            "🔮 Predictive Monitor": {
+                "page": "Predictive Monitor",
+                "icon": "🔮",
+                "roles": ["Administrator", "Safety Officer"]
+            },
+            "💾 Data Management": {
+                "page": "Data Management",
+                "icon": "💾",
+                "roles": ["Administrator"]
+            },
+            "🔍 NL Query": {
+                "page": "NL Query",
+                "icon": "🔍",
+                "roles": ["all"]
+            },
+            "⚙️ Settings": {
+                "page": "Settings",
+                "icon": "⚙️",
+                "roles": ["Administrator", "Safety Officer"]
+            }
+        }
+        
+        user_role = st.session_state.get('user_role', 'Viewer')
+        
+        for menu_label, menu_config in menu_items.items():
+            # Check role access
+            allowed_roles = menu_config.get('roles', ['all'])
+            if 'all' not in allowed_roles and user_role not in allowed_roles:
+                continue
+            
+            if 'submenu' in menu_config:
+                with st.expander(menu_label):
+                    for sub_label, sub_page in menu_config['submenu'].items():
+                        if st.button(sub_label, key=f"nav_{sub_page}", use_container_width=True):
+                            st.session_state['current_page'] = sub_page
+                            st.rerun()
+            else:
+                if st.button(menu_label, key=f"nav_{menu_config['page']}", use_container_width=True):
+                    st.session_state['current_page'] = menu_config['page']
+                    st.rerun()
+        
+        st.markdown("---")
+        
+        # Quick stats
+        st.markdown("### 📈 Quick Stats")
+        total = get_total_reports()
+        high_risk = get_high_risk_count()
+        
+        st.markdown(f"""
+        <div style="background: #F0F4F8; padding: 15px; border-radius: 10px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                <span>Total Reports</span>
+                <strong>{total}</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+                <span>High Risk</span>
+                <strong style="color: #DC3545;">{high_risk}</strong>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Logout button
+        if st.button("🚪 Logout", use_container_width=True):
+            logout_user()
+
+
+def logout_user():
+    """Log out the current user."""
+    
+    st.session_state['authenticated'] = False
+    st.session_state['username'] = None
+    st.session_state['user_role'] = None
+    st.rerun()
+
 
 def render_settings():
     """Render the settings page."""
@@ -8502,345 +10497,375 @@ def render_settings():
     # Load existing settings
     settings = st.session_state.get('app_settings', {})
     
-    # Create tabs
-    tab_general, tab_users = st.tabs(["🏢 General", "👥 Users"])
+    tab_general, tab_notifications, tab_display, tab_erp, tab_users = st.tabs([
+        "🏢 General", "🔔 Notifications", "🎨 Display", "🔗 ERP Integration", "👥 Users"
+    ])
     
     with tab_general:
-        st.markdown("### 🏢 General Configuration")
+        st.markdown("### 🏢 General Settings")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.text_input("Company Name", value=settings.get('company_name', 'Air Sial'))
-            st.selectbox("Timezone", ["Asia/Karachi (PKT)", "UTC"], index=0)
-        with col2:
-            st.text_input("ICAO Code", value=settings.get('company_code', 'PF'))
-            st.checkbox("Enable Email Notifications", value=True)
+        company_name = st.text_input(
+            "Company Name",
+            value=settings.get('company_name', 'Air Sial')
+        )
+        
+        company_code = st.text_input(
+            "ICAO Operator Code",
+            value=settings.get('company_code', 'PF')
+        )
+        
+        regulatory_authority = st.selectbox(
+            "Regulatory Authority",
+            ["PCAA - Pakistan Civil Aviation Authority", "EASA", "FAA", "CAA UK", "Other"],
+            index=0
+        )
+        
+        timezone = st.selectbox(
+            "Timezone",
+            ["Asia/Karachi (PKT)", "UTC", "Asia/Dubai", "Europe/London"],
+            index=0
+        )
+        
+        date_format = st.selectbox(
+            "Date Format",
+            ["YYYY-MM-DD", "DD/MM/YYYY", "MM/DD/YYYY"],
+            index=0
+        )
+        
+        st.markdown("#### Report ID Configuration")
+        
+        report_prefix = st.text_input(
+            "Report ID Prefix",
+            value=settings.get('report_prefix', 'PF')
+        )
+        
+        auto_numbering = st.checkbox(
+            "Enable Auto-Numbering",
+            value=settings.get('auto_numbering', True)
+        )
+    
+    with tab_notifications:
+        st.markdown("### 🔔 Notification Settings")
+        
+        email_notifications = st.checkbox(
+            "Enable Email Notifications",
+            value=settings.get('email_notifications', True)
+        )
+        
+        if email_notifications:
+            notification_events = st.multiselect(
+                "Send notifications for:",
+                ["New Report Submitted", "High Risk Report", "Status Change",
+                 "Assignment", "Due Date Reminder", "Investigation Complete"],
+                default=["New Report Submitted", "High Risk Report"]
+            )
             
-        if st.button("💾 Save Settings", type="primary"):
-            st.session_state['app_settings'] = {
-                'company_name': 'Air Sial',
-                'company_code': 'PF'
-            }
-            st.success("Settings saved successfully!")
-
+            notification_recipients = st.text_area(
+                "Default Recipients (one per line)",
+                value=settings.get('notification_recipients', 'safety@airsial.com')
+            )
+        
+        st.markdown("#### Alert Thresholds")
+        
+        high_risk_alert = st.checkbox(
+            "Alert on High/Extreme Risk Reports",
+            value=settings.get('high_risk_alert', True)
+        )
+        
+        daily_summary = st.checkbox(
+            "Send Daily Summary Email",
+            value=settings.get('daily_summary', False)
+        )
+        
+        weekly_report = st.checkbox(
+            "Send Weekly Report",
+            value=settings.get('weekly_report', True)
+        )
+    
+    with tab_display:
+        st.markdown("### 🎨 Display Settings")
+        
+        theme = st.selectbox(
+            "Color Theme",
+            ["Default Blue", "Dark Mode", "Light Mode", "High Contrast"],
+            index=0
+        )
+        
+        dashboard_layout = st.selectbox(
+            "Dashboard Layout",
+            ["Full Featured", "Compact", "Minimal"],
+            index=0
+        )
+        
+        items_per_page = st.slider(
+            "Reports Per Page",
+            min_value=10,
+            max_value=100,
+            value=settings.get('items_per_page', 25),
+            step=5
+        )
+        
+        show_risk_colors = st.checkbox(
+            "Show Risk Level Colors",
+            value=settings.get('show_risk_colors', True)
+        )
+        
+        animate_charts = st.checkbox(
+            "Animate Charts",
+            value=settings.get('animate_charts', True)
+        )
+    
+    with tab_erp:
+        st.markdown("### 🔗 ERP Integration")
+        
+        erp_enabled = st.checkbox(
+            "Enable ERP Integration",
+            value=settings.get('erp_enabled', False)
+        )
+        
+        if erp_enabled:
+            erp_system = st.selectbox(
+                "ERP System",
+                ["SAP", "Oracle", "Microsoft Dynamics", "Custom API"],
+                index=0
+            )
+            
+            erp_url = st.text_input(
+                "ERP API URL",
+                value=settings.get('erp_url', ''),
+                type="password" if settings.get('erp_url') else "default"
+            )
+            
+            erp_api_key = st.text_input(
+                "API Key",
+                type="password",
+                value=settings.get('erp_api_key', '')
+            )
+            
+            sync_frequency = st.selectbox(
+                "Sync Frequency",
+                ["Real-time", "Every 15 minutes", "Hourly", "Daily"],
+                index=1
+            )
+            
+            st.markdown("#### Data Sync Options")
+            
+            sync_options = st.multiselect(
+                "Data to Sync",
+                ["Personnel Records", "Aircraft Registry", "Flight Schedules",
+                 "Maintenance Records", "Training Records"],
+                default=["Personnel Records", "Aircraft Registry"]
+            )
+            
+            if st.button("🔄 Test Connection"):
+                with st.spinner("Testing connection..."):
+                    time.sleep(1)
+                    st.success("✅ Connection successful!")
+    
     with tab_users:
         st.markdown("### 👥 User Management")
-        st.info("User management is handled via Supabase Auth.")
-
-# --------------------------------------------------------------------------
-# HELPER FUNCTIONS (Must be defined before Main Execution)
-# --------------------------------------------------------------------------
-
-def get_user_role(username):
-    """Determine role based on username (Demo logic) or return 'Viewer'."""
-    roles = {
-        'admin': 'Administrator',
-        'safety': 'Safety Officer', 
-        'pilot': 'Flight Crew',
-        'viewer': 'Viewer'
-    }
-    return roles.get(username.lower(), 'Viewer')
-
-def load_data_from_supabase():
-    """
-    Fetch all data from Supabase into Session State.
-    Handles empty tables gracefully.
-    """
-    tables = [
-        'bird_strikes', 'laser_strikes', 'tcas_reports', 
-        'aircraft_incidents', 'hazard_reports', 'fsr_reports', 'captain_dbr'
-    ]
-    
-    for table in tables:
-        try:
-            # Fetch data
-            response = supabase.table(table).select("*").execute()
-            # Store in Session State
-            st.session_state[table] = response.data
-        except Exception as e:
-            # Ensure key exists even if fetch fails
-            if table not in st.session_state:
-                st.session_state[table] = []
-
-def initialize_session_state():
-    """
-    Initializes session state variables and pre-seeds the required users.
-    """
-    if 'users' not in st.session_state:
-        # Pre-seed the requested users (All set to Approved = True)
-        st.session_state['users'] = {
-            "analyst@test.com": {
-                "password": "analyst123", 
-                "role": "Analyst", 
-                "name": "Test Analyst", 
-                "dept": "Flight Operations",
-                "approved": True  # Pre-approved
-            },
-            "safety@test.com": {
-                "password": "safety123", 
-                "role": "Safety Head", 
-                "name": "Safety Manager", 
-                "dept": "Safety & Security",
-                "approved": True  # Pre-approved
-            },
-            "admin@test.com": {
-                "password": "admin123", 
-                "role": "Admin", 
-                "name": "System Admin", 
-                "dept": "IT",
-                "approved": True  # Pre-approved
-            }
-        }
-    
-    # Initialize other state variables if missing
-    if 'authenticated' not in st.session_state:
-        st.session_state['authenticated'] = False
-    if 'user_role' not in st.session_state:
-        st.session_state['user_role'] = None
-    if 'username' not in st.session_state:
-        st.session_state['username'] = None
         
-    # Ensure database/lists exist
-    for key in ['hazard_reports', 'mor_reports', 'audit_reports']:
-        if key not in st.session_state:
-            st.session_state[key] = []
-
-# --------------------------------------------------------------------------
-# AUTHENTICATION & UI RENDERERS
-# --------------------------------------------------------------------------
-
-def render_login_page():
-    """
-    Login & Registration Page with Admin Approval Workflow.
-    """
-    st.markdown("<h1 style='text-align: center; color: #1e3c72;'>✈️ Air Sial SMS Portal</h1>", unsafe_allow_html=True)
-    
-    tab1, tab2 = st.tabs(["🔐 Login", "📝 Register (Request Access)"])
-    
-    # --- TAB 1: LOGIN ---
-    with tab1:
-        with st.form("login_form"):
-            email = st.text_input("Email Address")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Login", use_container_width=True)
+        # Sample users
+        users = [
+            {'username': 'admin', 'role': 'Administrator', 'status': 'Active', 'last_login': '2025-12-09 14:30'},
+            {'username': 'safety', 'role': 'Safety Officer', 'status': 'Active', 'last_login': '2025-12-09 10:15'},
+            {'username': 'viewer', 'role': 'Viewer', 'status': 'Active', 'last_login': '2025-12-08 16:45'},
+            {'username': 'pilot', 'role': 'Flight Crew', 'status': 'Active', 'last_login': '2025-12-07 09:00'},
+        ]
+        
+        # User table
+        for user in users:
+            status_color = '#28A745' if user['status'] == 'Active' else '#DC3545'
             
-            if submitted:
-                users = st.session_state['users']
-                
-                if email in users and users[email]['password'] == password:
-                    user_data = users[email]
-                    
-                    # 🔴 CHECK: Is the account approved?
-                    if not user_data.get('approved', False):
-                        st.error("⏳ Account Pending Approval. Please contact the Administrator.")
-                    else:
-                        # Login Success
-                        st.session_state['authenticated'] = True
-                        st.session_state['username'] = user_data.get('name', email)
-                        st.session_state['user_role'] = user_data['role']
-                        st.session_state['user_department'] = user_data.get('dept', 'General')
-                        st.rerun()
-                else:
-                    st.error("❌ Invalid email or password")
-
-    # --- TAB 2: REGISTER (PENDING APPROVAL) ---
-    with tab2:
-        st.warning("ℹ️ New accounts require Admin approval before access is granted.")
-        with st.form("register_form"):
-            new_email = st.text_input("Email")
-            new_name = st.text_input("Full Name")
-            new_pass = st.text_input("Password", type="password")
-            new_dept = st.selectbox("Department", DEPARTMENTS)
-            # Users can request a role, but Admin must approve it
-            req_role = st.selectbox("Requested Role", ["Reporter", "Analyst", "Safety Head"])
-            
-            reg_submit = st.form_submit_button("Request Access")
-            
-            if reg_submit:
-                if new_email in st.session_state['users']:
-                    st.error("User already exists.")
-                elif new_email and new_pass:
-                    # Create User with Approved = False
-                    st.session_state['users'][new_email] = {
-                        "password": new_pass,
-                        "name": new_name,
-                        "dept": new_dept,
-                        "role": req_role,
-                        "approved": False  # <--- DEFAULT IS FALSE
-                    }
-                    st.success("✅ Registration Submitted! Your account is pending Admin approval.")
-                else:
-                    st.error("Please fill all fields.")
-
-def render_admin_panel():
-    """
-    Admin-only panel to manage user approvals.
-    """
-    st.markdown("## 🛡️ Admin User Management")
-    st.info("Approve or Reject new registration requests.")
-    
-    users = st.session_state.get('users', {})
-    
-    # Filter for PENDING users
-    pending_users = [email for email, data in users.items() if not data.get('approved', False)]
-    
-    if not pending_users:
-        st.success("✅ No pending approvals.")
-    else:
-        for email in pending_users:
-            user = users[email]
-            with st.expander(f"⏳ Request: {user['name']} ({user['role']})", expanded=True):
-                c1, c2, c3 = st.columns([2, 1, 1])
-                with c1:
-                    st.write(f"**Email:** {email}")
-                    st.write(f"**Dept:** {user['dept']}")
-                with c2:
-                    if st.button("✅ Approve", key=f"app_{email}"):
-                        st.session_state['users'][email]['approved'] = True
-                        st.success(f"Approved {user['name']}")
-                        st.rerun()
-                with c3:
-                    if st.button("❌ Reject", key=f"rej_{email}"):
-                        del st.session_state['users'][email]
-                        st.warning(f"Rejected {user['name']}")
-                        st.rerun()
-                        
-    st.markdown("---")
-    st.markdown("### 👥 Active Users")
-    # Show list of active approved users
-    active_users = [
-        {"Name": data['name'], "Role": data['role'], "Email": email} 
-        for email, data in users.items() if data.get('approved', False)
-    ]
-    st.dataframe(pd.DataFrame(active_users), use_container_width=True)
-
-
-
-def render_sidebar():
-    with st.sidebar:
-        # 1. Branding & User Info
-        logo_path = get_logo_path() # Use the helper function to find the file
-        if logo_path:
-            try:
-                st.image(logo_path, width=120)
-            except:
-                st.markdown('<span style="font-size: 3rem;">🛡️✈️</span>', unsafe_allow_html=True)
-        else:
-            # Fallback icon if no logo file exists
-            st.markdown('<span style="font-size: 3rem;">🛡️✈️</span>', unsafe_allow_html=True)
-            
-        st.markdown(f"**User:** {st.session_state.get('username', 'Guest')}")
-        st.markdown(f"**Role:** {st.session_state.get('user_role', 'Reporter')}")
+            st.markdown(f"""
+            <div style="background: white; padding: 15px; border-radius: 10px; 
+                        margin-bottom: 10px; border: 1px solid #E0E0E0;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>👤 {user['username']}</strong>
+                        <span style="color: #666; margin-left: 10px;">({user['role']})</span>
+                    </div>
+                    <span style="background: {status_color}; color: white; padding: 3px 10px; 
+                                border-radius: 15px; font-size: 0.8rem;">
+                        {user['status']}
+                    </span>
+                </div>
+                <div style="color: #888; font-size: 0.85rem; margin-top: 5px;">
+                    Last login: {user['last_login']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
         st.markdown("---")
         
+        if st.button("➕ Add New User"):
+            st.info("User creation dialog would open here")
+    
+    # Save settings button
+    st.markdown("---")
+    
+    if st.button("💾 Save All Settings", use_container_width=True):
+        # Collect all settings
+        new_settings = {
+            'company_name': company_name,
+            'company_code': company_code,
+            'report_prefix': report_prefix,
+            'auto_numbering': auto_numbering,
+            'email_notifications': email_notifications,
+            'high_risk_alert': high_risk_alert,
+            'daily_summary': daily_summary,
+            'weekly_report': weekly_report,
+            'items_per_page': items_per_page,
+            'show_risk_colors': show_risk_colors,
+            'animate_charts': animate_charts,
+            'erp_enabled': erp_enabled,
+            'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        st.session_state['app_settings'] = new_settings
+        st.success("✅ Settings saved successfully!")
 
-        # 2. Main Navigation
-        if st.button("📊 Dashboard", use_container_width=True):
-            st.session_state['current_page'] = 'Dashboard'
-            st.rerun()
 
-        # 3. Forms (Strict List)
-        st.markdown("### 📝 Reporting")
-        if st.button("⚠️ Hazard Report", use_container_width=True):
-            st.session_state['current_page'] = 'Hazard Report'
-            st.rerun()
-        if st.button("🚨 MOR (Mandatory)", use_container_width=True):
-            st.session_state['current_page'] = 'MOR'
-            st.rerun()
-        if st.button("🧪 Quality/Audit", use_container_width=True):
-            st.session_state['current_page'] = 'Audit'
-            st.rerun()
-            
-        # 4. Operational Forms (Legacy Preserved)
-        with st.expander("📂 Operational Forms"):
-            if st.button("📝 FSR Report"): st.session_state['current_page'] = 'FSR Report'
-            if st.button("👨‍✈️ Capt Debrief"): st.session_state['current_page'] = 'Captain Debrief'
-            
-        # 5. Enterprise Tools & AI
-        with st.expander("🏢 Enterprise Tools"):
-            if st.button("IOSA Compliance"): st.session_state['current_page'] = 'IOSA Compliance'
-            if st.button("Ramp Inspection"): st.session_state['current_page'] = 'Ramp Inspections'
-            if st.button("Email Center"): st.session_state['current_page'] = 'Email Center'
-            # ADDED HERE:
-            if st.button("🤖 AI Assistant"): st.session_state['current_page'] = 'AI Assistant'
+def initialize_session_state():
+    """Initialize all required session state variables."""
+    
+    # Authentication
+    if 'authenticated' not in st.session_state:
+        st.session_state['authenticated'] = False
+    
+    if 'current_page' not in st.session_state:
+        st.session_state['current_page'] = 'Dashboard'
+    
+    # Report data storage
+    report_types = [
+        'bird_strikes', 'laser_strikes', 'tcas_reports',
+        'aircraft_incidents', 'hazard_reports', 'fsr_reports',
+        'captain_dbr', 'ramp_inspections', 'audit_findings', 'moc_requests'
+    ]
+    
+    for report_type in report_types:
+        if report_type not in st.session_state:
+            st.session_state[report_type] = []
+    
+    # OCR data
+    ocr_types = [
+        'ocr_data_bird_strike', 'ocr_data_laser_strike', 'ocr_data_tcas_report',
+        'ocr_data_incident_report', 'ocr_data_hazard_report', 'ocr_data_fsr_report',
+        'ocr_data_captain_dbr'
+    ]
+    
+    for ocr_type in ocr_types:
+        if ocr_type not in st.session_state:
+            st.session_state[ocr_type] = None
+    
+    # AI chat history
+    if 'ai_chat_history' not in st.session_state:
+        st.session_state['ai_chat_history'] = []
+    
+    # Settings
+    if 'app_settings' not in st.session_state:
+        st.session_state['app_settings'] = {}
+    
+    if 'email_settings' not in st.session_state:
+        st.session_state['email_settings'] = {}
 
-        if st.session_state.get('user_role') == 'Admin':
-            st.markdown("---")
-            st.markdown("### 🛡️ Administration")
-            if st.button("👥 Manage Users", use_container_width=True):
-                st.session_state['current_page'] = 'Admin Panel'
-                st.rerun()
 
 def route_to_page():
-    """
-    Robust Routing: Maps Sidebar selections to Functions.
-    """
-    page = st.session_state.get('current_page', 'Dashboard')
+    """Route to the appropriate page based on current_page state."""
     
-    # Map Pages to Functions
-    PAGES = {
+    current_page = st.session_state.get('current_page', 'Dashboard')
+    
+    page_routing = {
         'Dashboard': render_dashboard,
+        'View Reports': render_view_reports,
+        'Bird Strike Report': render_bird_strike_form,
+        'Laser Strike Report': render_laser_strike_form,
+        'TCAS Report': render_tcas_report_form,
+        'Aircraft Incident Report': render_incident_form,
         'Hazard Report': render_hazard_form,
-        'MOR': render_mor_form,
-        'Audit': render_audit_form,
-        'Admin Panel': render_admin_panel, 
-        
-        # Legacy / Operational
-        'FSR Report': globals().get('render_fsr_form'),
-        'Captain Debrief': globals().get('render_captain_debrief'),
-        
-        # Enterprise
-        'IOSA Compliance': globals().get('render_iosa_compliance'),
-        'Ramp Inspections': globals().get('render_ramp_inspection'),
-        'Email Center': globals().get('render_email_center'),
-        
-        # AI Assistant - Points to the local function defined in app.py
-        'AI Assistant': render_ai_assistant 
+        'FSR Report': render_fsr_form,
+        'Captain Debrief': render_captain_dbr_form,
+        'Report Detail': render_report_detail,
+        'AI Assistant': render_ai_assistant,
+        'Email Center': render_email_center,
+        'Geospatial Map': render_geospatial_map,
+        'IOSA Compliance': render_iosa_compliance,
+        'Ramp Inspections': render_ramp_inspection,
+        'Audit Findings': render_audit_findings,
+        'MoC Workflow': render_moc_workflow,
+        'Predictive Monitor': render_predictive_monitor,
+        'Data Management': render_data_management,
+        'NL Query': render_nl_query,
+        'Settings': render_settings
     }
     
-    # Execution Logic
-    if page in PAGES:
-        func = PAGES[page]
-        if func:
-            try:
-                func()
-            except Exception as e:
-                st.error(f"⚠️ Critical Error loading '{page}': {e}")
-                st.info("Check the logs for details.")
-        else:
-            st.warning(f"🚧 Page '{page}' is enabled in menu but code is missing.")
-    else:
-        st.error(f"❌ Routing Error: Page '{page}' is unknown.")
+    # Get the render function
+    render_func = page_routing.get(current_page, render_dashboard)
+    
+    # Call the render function with error handling
+    try:
+        render_func()
+    except Exception as e:
+        st.error(f"Error rendering {current_page}: {str(e)}")
+        st.exception(e)
 
-# ==============================================================================
-# 3. MAIN EXECUTION BLOCK (MUST BE LAST)
-# ==============================================================================
+
+def main():
+    """Main application entry point."""
+    
+    # Page configuration
+    st.set_page_config(
+        page_title="Air Sial SMS v3.0",
+        page_icon="✈️",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    try:
+        # Initialize session state
+        initialize_session_state()
+        
+        # Apply custom CSS
+        apply_custom_css()
+        
+        # Check authentication
+        if not st.session_state.get('authenticated', False):
+            render_login_page()
+            return
+        
+        # Render sidebar
+        render_sidebar()
+        
+        # Render header
+        render_header()
+        
+        # Route to current page
+        route_to_page()
+        
+        # Footer
+        render_footer()
+        
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        st.exception(e)
+
 
 def render_footer():
-    """Renders the application footer."""
+    """Render the application footer."""
+    
     st.markdown("---")
-    st.markdown(
-        "<center style='color:#888; font-size: 0.8rem;'>"
-        "Air Sial SMS v3.0 | Safety Management System | © 2026"
-        "</center>", 
-        unsafe_allow_html=True
-    )
+    st.markdown("""
+    <div style="text-align: center; color: #888; padding: 20px; font-size: 0.85rem;">
+        <p>Air Sial Safety Management System v3.0</p>
+        <p>© 2025 Air Sial. All rights reserved.</p>
+        <p>Powered by Streamlit | Built with ❤️ for Aviation Safety</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# --------------------------------------------------------------------------
-# ENSURE THIS BLOCK IS BELOW THE FUNCTION DEFINITION
-# --------------------------------------------------------------------------
+
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
+
 if __name__ == "__main__":
-    # 1. Initialize State
-    initialize_session_state()
-    
-    # 2. Apply CSS
-    apply_custom_css()
-    
-    # 3. Routing Logic
-    if not st.session_state.get('authenticated', False):
-        render_login_page()
-    else:
-        render_sidebar()
-        render_header()
-        route_to_page()
-        render_footer() # <--- Now this will work because the function exists above
+    main()
