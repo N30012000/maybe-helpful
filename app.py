@@ -8719,10 +8719,20 @@ def render_admin_panel():
 def render_sidebar():
     with st.sidebar:
         # 1. Branding & User Info
-        st.image("logo.png", width=120) 
+        logo_path = get_logo_path() # Use the helper function to find the file
+        if logo_path:
+            try:
+                st.image(logo_path, width=120)
+            except:
+                st.markdown('<span style="font-size: 3rem;">🛡️✈️</span>', unsafe_allow_html=True)
+        else:
+            # Fallback icon if no logo file exists
+            st.markdown('<span style="font-size: 3rem;">🛡️✈️</span>', unsafe_allow_html=True)
+            
         st.markdown(f"**User:** {st.session_state.get('username', 'Guest')}")
         st.markdown(f"**Role:** {st.session_state.get('user_role', 'Reporter')}")
         st.markdown("---")
+        
 
         # 2. Main Navigation
         if st.button("📊 Dashboard", use_container_width=True):
