@@ -25,7 +25,12 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from enum import Enum
 from typing import Optional, Dict, List, Any, Tuple
-from streamlit_mic_recorder import mic_recorder
+try:
+    from streamlit_mic_recorder import mic_recorder
+    MIC_RECORDER_AVAILABLE = True
+except ImportError:
+    mic_recorder = None
+    MIC_RECORDER_AVAILABLE = False
 # Third-party imports
 import pandas as pd
 from datetime import datetime
