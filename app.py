@@ -2400,18 +2400,19 @@ def render_bird_strike_form():
                 placeholder="e.g., PF-101"
             )
         with col2:
+            # Prepare options from the dictionary keys
             fleet_options = [""] + list(AIRCRAFT_FLEET.keys())
+            
+            # Find the correct index safely if you have OCR data
+            default_index = 0
+            if ocr_data.get('aircraft_reg') in fleet_options:
+                default_index = fleet_options.index(ocr_data['aircraft_reg'])
 
-# Find the correct index safely if you have OCR data
-default_index = 0
-if ocr_data.get('aircraft_reg') in fleet_options:
-    default_index = fleet_options.index(ocr_data['aircraft_reg'])
-
-aircraft_reg = st.selectbox(
-    "Aircraft Registration *",
-    options=fleet_options,
-    index=default_index
-)
+            aircraft_reg = st.selectbox(
+                "Aircraft Registration *",
+                options=fleet_options,
+                index=default_index
+            )
             )
         with col3:
             # Auto-populate aircraft type based on registration
