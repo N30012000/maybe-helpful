@@ -8639,9 +8639,87 @@ def add_ai_response(response_type):
 # EMAIL FEATURES
 # =============================================================================
 
-def render_email_center():
-    """Email management center for safety communications."""
+def render_sent_received_logs():
+    """Displays Inbox and Sent Items lists."""
+    st.markdown("### 📨 Sent & Received Logs")
     
+    t_inbox, t_sent = st.tabs(["📥 Inbox (Received)", "📤 Sent Items"])
+    
+    with t_inbox:
+        st.markdown("#### Recent Incoming Mail")
+        inbox_data = [
+            {"Date": "2026-02-02", "From": "flightops@airsial.com", "Subject": "Re: Bird Strike Incident #402", "Priority": "High"},
+            {"Date": "2026-02-01", "From": "caa.regulatory@caapakistan.com.pk", "Subject": "Safety Circular 2026-05", "Priority": "Normal"},
+            {"Date": "2026-01-30", "From": "engineering.maint@airsial.com", "Subject": "A320 Maintenance Schedule Update", "Priority": "Normal"},
+            {"Date": "2026-01-29", "From": "ground.services@airsial.com", "Subject": "Ramp Safety Audit Response", "Priority": "Low"},
+        ]
+        st.dataframe(pd.DataFrame(inbox_data), use_container_width=True)
+        
+    with t_sent:
+        st.markdown("#### Recently Sent Emails")
+        sent_data = [
+            {"Date": "2026-02-02", "To": "safety.board@airsial.com", "Subject": "Weekly Safety Summary (Week 5)", "Status": "Delivered"},
+            {"Date": "2026-02-01", "To": "pilot.chief@airsial.com", "Subject": "Urgent: Weather Alert for Northern Sector", "Status": "Read"},
+            {"Date": "2026-01-31", "To": "all.staff@airsial.com", "Subject": "New Hazard Reporting Guidelines", "Status": "Delivered"},
+        ]
+        st.dataframe(pd.DataFrame(sent_data), use_container_width=True)
+
+
+def render_email_status_matrix():
+    """Renders the 30-Email Daily Conclusion Matrix (Scrollable)."""
+    st.markdown("### 🗓️ Daily Communication Conclusion Log")
+    st.caption("Tracking the final status of daily correspondence (Scroll right to see up to Email 30).")
+
+    columns = ["DATE"] + [f"EMAIL {i}" for i in range(1, 31)]
+
+    data = [
+        {
+            "DATE": "02-02-2026",
+            "EMAIL 1": "SENT TO FLIGHT OPS",
+            "EMAIL 2": "NOT CARRYING ANYMORE",
+            "EMAIL 3": "PENDING GM APPROVAL",
+            "EMAIL 4": "CLOSED",
+            "EMAIL 5": "VENDOR REPLY RCVD"
+        },
+        {
+            "DATE": "01-02-2026",
+            "EMAIL 1": "URGENT ALERT SENT",
+            "EMAIL 2": "ACKNOWLEDGED BY ENG",
+            "EMAIL 3": "NO ACTION REQ",
+            "EMAIL 4": "FWD: SAFETY BOARD"
+        },
+        {
+            "DATE": "31-01-2026",
+            "EMAIL 1": "BIRD STRIKE REPORT",
+            "EMAIL 2": "RESOLVED",
+            "EMAIL 3": "-",
+            "EMAIL 4": "-"
+        }
+    ]
+
+    processed_data = []
+    for row in data:
+        full_row = row.copy()
+        for i in range(1, 31):
+            col_name = f"EMAIL {i}"
+            if col_name not in full_row:
+                full_row[col_name] = "-"
+        processed_data.append(full_row)
+
+    df = pd.DataFrame(processed_data, columns=columns)
+    df = df.set_index("DATE")
+
+    st.dataframe(df, use_container_width=True, height=400)
+    st.download_button(
+        "📥 Download Log",
+        df.to_csv().encode('utf-8'),
+        "email_log.csv",
+        "text/csv"
+    )
+
+
+def render_email_center():
+    """Main Container for Email Features - 4 Tabs"""
     st.markdown("""
     <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
                 padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
@@ -8651,22 +8729,22 @@ def render_email_center():
         </p>
     </div>
     """, unsafe_allow_html=True)
-    
-    tab_compose, tab_templates, tab_sent, tab_settings = st.tabs([
-        "✉️ Compose", "📋 Templates", "📤 Sent", "⚙️ Settings"
+
+    tab_compose, tab_inbox_sent, tab_templates, tab_matrix = st.tabs([
+        "✉️ Compose", "📨 Inbox & Sent", "📋 Templates", "🗓️ Status Matrix"
     ])
-    
+
     with tab_compose:
         render_compose_email()
-    
+
+    with tab_inbox_sent:
+        render_sent_received_logs()
+
     with tab_templates:
         render_email_templates()
-    
-    with tab_sent:
-        render_sent_emails()
-    
-    with tab_settings:
-        render_email_settings()
+
+    with tab_matrix:
+        render_email_status_matrix()
 
 
 def render_compose_email():
