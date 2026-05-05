@@ -581,7 +581,84 @@ class Config:
 # ============================================================================
 # ENHANCED SESSION STATE MANAGEMENT
 # ============================================================================
-
+def render_email_trail(report):
+    """Render the email communication trail for a report."""
+    
+    st.markdown("### 📧 Email Communications")
+    
+    # Mock email trail (would come from database in production)
+    emails = [
+        {
+            'subject': f"[Safety Report] {report['id']} - Initial Notification",
+            'from': 'sms@airsial.com',
+            'to': 'safety.manager@airsial.com',
+            'date': report['date'],
+            'time': '09:35',
+            'preview': f"A new {report['type']} has been submitted. Risk Level: {report['risk_level']}...",
+            'status': 'sent'
+        },
+        {
+            'subject': f"RE: [Safety Report] {report['id']} - Investigation Assigned",
+            'from': 'safety.manager@airsial.com',
+            'to': 'investigator@airsial.com',
+            'date': report['date'],
+            'time': '10:20',
+            'preview': "Please review and investigate this report. Priority: High...",
+            'status': 'sent'
+        },
+        {
+            'subject': f"RE: [Safety Report] {report['id']} - Status Update",
+            'from': 'investigator@airsial.com',
+            'to': 'safety.manager@airsial.com',
+            'date': report['date'],
+            'time': '16:45',
+            'preview': "Investigation in progress. Initial findings suggest...",
+            'status': 'sent'
+        }
+    ]
+    
+    for email in emails:
+        status_color = '#28A745' if email['status'] == 'sent' else '#FFC107'
+        
+        st.markdown(f"""
+        <div style="background: white; padding: 20px; border-radius: 10px; 
+                    margin-bottom: 15px; border: 1px solid #E0E0E0;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <strong style="color: #333;">{email['subject']}</strong>
+                <span style="background: {status_color}; color: white; padding: 3px 10px; 
+                            border-radius: 15px; font-size: 0.75rem;">
+                    {email['status'].upper()}
+                </span>
+            </div>
+            <div style="color: #666; font-size: 0.85rem; margin: 10px 0;">
+                <strong>From:</strong> {email['from']} | <strong>To:</strong> {email['to']}
+            </div>
+            <div style="color: #888; font-size: 0.85rem;">
+                📅 {email['date']} at {email['time']}
+            </div>
+            <div style="color: #555; margin-top: 10px; padding: 10px; 
+                        background: #F8F9FA; border-radius: 5px;">
+                {email['preview']}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Compose new email
+    st.markdown("---")
+    st.markdown("#### ✉️ Send New Email")
+    
+    email_to = st.text_input("To:", "safety.manager@airsial.com")
+    email_subject = st.text_input("Subject:", f"RE: [Safety Report] {report['id']}")
+    email_body = st.text_area("Message:", height=150)
+    
+    email_col1, email_col2 = st.columns([1, 3])
+    with email_col1:
+        if st.button("📤 Send Email", use_container_width=True):
+            st.success("Email sent successfully!")
+    with email_col2:
+        st.caption("Email will be sent via configured SMTP server")
+        
 def initialize_session_state():
     """Initialize all session state variables"""
     # Authentication
