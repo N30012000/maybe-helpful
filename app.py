@@ -2403,7 +2403,7 @@ def render_bird_strike_form():
             # Prepare options from the dictionary keys
             fleet_options = [""] + list(AIRCRAFT_FLEET.keys())
             
-            # Find the correct index safely if you have OCR data
+# Find the correct index safely if you have OCR data
             default_index = 0
             if ocr_data.get('aircraft_reg') in fleet_options:
                 default_index = fleet_options.index(ocr_data['aircraft_reg'])
@@ -2412,8 +2412,8 @@ def render_bird_strike_form():
                 "Aircraft Registration *",
                 options=fleet_options,
                 index=default_index
-            )
-            )
+            )  # <-- The function properly closes here. 
+
         with col3:
             # Auto-populate aircraft type based on registration
             aircraft_type = st.text_input(
