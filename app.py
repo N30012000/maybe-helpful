@@ -10442,13 +10442,13 @@ with tab_drive:
         
         if drive_db:
             st.subheader("Upload Safety Attachments")
-            uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
+            uploaded_pdf = st.file_uploader("Choose a PDF file", type=["pdf"], key="drive_uploader")
             
-            if uploaded_file is not None:
+            if uploaded_pdf is not None:
                 if st.button("🚀 Push to Cloud Storage"):
                     with st.spinner("Uploading to Google Drive secure layer..."):
-                        raw_bytes = uploaded_file.read()
-                        drive_file_id = drive_db.upload_pdf(uploaded_file.name, raw_bytes)
+                        raw_bytes = uploaded_pdf.read()
+                        drive_file_id = drive_db.upload_pdf(uploaded_pdf.name, raw_bytes)
                         st.success(f"Successfully uploaded! Document Saved ID: `{drive_file_id}`")
             
             st.markdown("---")
@@ -10465,7 +10465,7 @@ with tab_drive:
                         with st.spinner("Downloading from secure Drive container..."):
                             pdf_content = drive_db.fetch_pdf(target_id)
                             
-                            # FIX: Streamlit doesn't have st.pdf(), so we use a base64 iframe instead!
+                            # Safely render the PDF using base64 formatting
                             import base64
                             base64_pdf = base64.b64encode(pdf_content).decode('utf-8')
                             pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
