@@ -660,7 +660,7 @@ def render_email_trail(report):
         st.caption("Email will be sent via configured SMTP server")
         
 def initialize_session_state():
-    """Initialize all session state variables"""
+    """Initialize all session state variables."""
     # Authentication
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
@@ -668,7 +668,15 @@ def initialize_session_state():
         st.session_state.user_role = "viewer"
     if 'username' not in st.session_state:
         st.session_state.username = ""
-    
+        
+    # SILENT GOOGLE DRIVE INITIALIZATION (No green success badges)
+    if 'drive_db' not in st.session_state:
+        try:
+            from drive_store import GoogleDriveBackend
+            st.session_state['drive_db'] = GoogleDriveBackend()
+        except Exception:
+            st.session_state['drive_db'] = None
+
     # ERP Mode
     if 'erp_mode' not in st.session_state:
         st.session_state.erp_mode = False
@@ -2893,10 +2901,10 @@ def render_bird_strike_form():
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             submitted = st.form_submit_button(
-        "📤 Submit Bird Strike Report",
-        use_container_width=True,
-        type="primary"
-    )
+                "📤 Submit Bird Strike Report",
+                use_container_width=True,
+                type="primary"
+            )
 
     if submitted:
             # Validation
@@ -7687,22 +7695,22 @@ def render_report_details_tab(report):
     # Description/Narrative
     st.markdown("### 📝 Description")
     st.markdown(f"""
-    <div style="background: #F8F9FA; padding: 20px; border-radius: 10px; 
-                border-left: 4px solid #667eea;">
+    <div style="background: #F8F9FA; padding: 20px; border-radius: 10px; border-left: 4px solid #667eea;">
         {report['description']}
     </div>
     """, unsafe_allow_html=True)
     
-    # Additional fields based on report type
-    if raw_data:
-        st.markdown("### 📊 Additional Details")
-        
-        # Display all raw data in expandable section
-        with st.expander("View All Report Data"):
-            for key, value in raw_data.items():
-                if key not in ['report_id', 'id', 'date', 'reporter_name', 'risk_level', 
-                              'status', 'description', 'narrative']:
-                    st.markdown(f"**{key.replace('_', ' ').title()}:** {value}")
+    # 🟢 INTEGRATED RETRIEVAL (No dedicated screen required)
+    attachment_id = raw_data.get('drive_attachment_id', 'None')
+    if attachment_id and attachment_id != 'None' and st.session_state.get('drive_db'):
+        st.markdown("### 📎 Secure Document Evidence")
+        if st.button("📥 Retrieve & Preview Attached Safety Log"):
+            with st.spinner("Fetching source PDF from Drive Container..."):
+                try:
+                    pdf_content = st.session_state['drive_db'].fetch_pdf(attachment_id)
+                    st.pdf(pdf_content)
+                except Exception as e:
+                    st.error(f"Could not load asset: {e}")
 
 
 def render_report_timeline(report):
@@ -9869,18 +9877,7 @@ def render_audit_findings():
                 if st.button("Update", key=f"update_{finding['id']}"):
                     finding['status'] = new_status
                     st.success("Status updated!")
-import streamlit as st
-from drive_store import GoogleDriveBackend
 
-# Initialize our free Drive storage layer
-try:
-    drive_db = GoogleDriveBackend()
-    st.sidebar.success("🔗 Connected to Free Google Drive Bucket")
-except Exception as e:
-    st.sidebar.error(f"Failed connecting to storage system: {e}")
-    drive_db = None
-
-st.title("Document Center Integration")
 
 if drive_db:
     # 1. HANDLE UPLOAD ROUTINE (e.g., Inside a custom form)
