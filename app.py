@@ -10314,8 +10314,8 @@ def render_data_management():
     </div>
     """, unsafe_allow_html=True)
     
-    tab_export, tab_import, tab_backup = st.tabs([
-        "📤 Export Data", "📥 Import Data", "💾 Backup/Restore"
+    tab_export, tab_import, tab_backup, tab_drive = st.tabs([
+        "📤 Export Data", "📥 Import Data", "💾 Backup/Restore", "☁️ Google Drive"
     ])
     
     with tab_export:
@@ -10436,7 +10436,46 @@ def render_data_management():
                 )
                 
                 st.success("Backup created successfully!")
-
+with tab_drive:
+        st.markdown("### ☁️ Google Drive Storage")
+        drive_db = st.session_state.get('drive_db', None)
+        
+        if drive_db:
+            st.subheader("Upload Safety Attachments")
+            uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
+            
+            if uploaded_file is not None:
+                if st.button("🚀 Push to Cloud Storage"):
+                    with st.spinner("Uploading to Google Drive secure layer..."):
+                        raw_bytes = uploaded_file.read()
+                        drive_file_id = drive_db.upload_pdf(uploaded_file.name, raw_bytes)
+                        st.success(f"Successfully uploaded! Document Saved ID: `{drive_file_id}`")
+            
+            st.markdown("---")
+            st.subheader("Fetch Existing Safety System Logs")
+            
+            try:
+                saved_files = drive_db.list_saved_pdfs()
+                if saved_files:
+                    file_options = {f["name"]: f["id"] for f in saved_files}
+                    selected_doc_name = st.selectbox("Select document to retrieve:", list(file_options.keys()))
+                    
+                    if st.button("📥 Retrieve Document"):
+                        target_id = file_options[selected_doc_name]
+                        with st.spinner("Downloading from secure Drive container..."):
+                            pdf_content = drive_db.fetch_pdf(target_id)
+                            
+                            # FIX: Streamlit doesn't have st.pdf(), so we use a base64 iframe instead!
+                            import base64
+                            base64_pdf = base64.b64encode(pdf_content).decode('utf-8')
+                            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+                            st.markdown(pdf_display, unsafe_allow_html=True)
+                else:
+                    st.warning("No files found currently inside your shared Google Drive workspace folder.")
+            except Exception as e:
+                st.error(f"Error connecting to Drive: {e}")
+        else:
+            st.error("Google Drive backend is not initialized.")
 
 def render_nl_query():
     """Natural Language Query Interface."""
