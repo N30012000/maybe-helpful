@@ -10010,47 +10010,274 @@ def render_moc_workflow():
 import streamlit as st
 
 def render_moc_document_center():
-    st.markdown("### ✈️ Management of Change (MoC) Compliance Registry")
-    
-    # 1. Fetch file names silently from Google Drive
+    """
+    Management of Change (MoC) Compliance Registry Dashboard.
+    Displays the corporate MoC file matrix and enables native PDF inspection
+    via the Google Drive backend stored in st.session_state['drive_db'].
+    """
+
+    # ── Scope-isolated backend reference ────────────────────────────────────
     drive_db = st.session_state.get('drive_db', None)
-    
-    if drive_db:
-        with st.spinner("Syncing safety case archives..."):
+
+    # ── Corporate MoC Register (source of truth) ────────────────────────────
+    MOC_REGISTER = [
+        {
+            "filename":      "Unified SMS manual.pdf",
+            "ref":           "MOC/39/2025",
+            "title":         "Unified SMS Manual of Air Sial",
+            "scope":         "Unified SMS Manual consolidating Engineering and Corporate safety procedures.",
+            "key_risks":     "Regulatory alignment gaps between Engineering SMS & Corporate safety procedures.",
+            "mitigated_risk": "Minor / Rare",
+            "risk_band":     "Acceptable",
+            "status":        "COMPLETED",
+        },
+        {
+            "filename":      "Two new A320 aircrafts.pdf",
+            "ref":           "MOC/31/2024",
+            "title":         "Dry Lease Induction of Two Airbus A320s (CFM56)",
+            "scope":         "Dry Lease Induction of Two Airbus A320s (CFM56) into Air Sial fleet.",
+            "key_risks":     "Non-availability of technical data lines; technical personnel type rating / competency shortfalls.",
+            "mitigated_risk": "2D / 1E",
+            "risk_band":     "Acceptable",
+            "status":        "CLOSED",
+        },
+        {
+            "filename":      "Plan to commence flights to Skardu.pdf",
+            "ref":           "MOC/49/2026",
+            "title":         "New Operations — Skardu Station (KDU)",
+            "scope":         "Strategic plan to commence operations to high-altitude Skardu Station (KDU).",
+            "key_risks":     "Severe weather limitations, payload constraints, terrain clearance complexities.",
+            "mitigated_risk": "1C / 2D",
+            "risk_band":     "Tolerable",
+            "status":        "UNDER REVIEW",
+        },
+        {
+            "filename":      "MOC operational considerations arising from current gulf war situation.pdf",
+            "ref":           "MOC/SEC/2026",
+            "title":         "Gulf War Situation — Operational Considerations",
+            "scope":         "Operational considerations arising from current Gulf war situation.",
+            "key_risks":     "Airspace restrictions, GPS spoofing, radio jamming, tactical forced-landing rerouting constraints.",
+            "mitigated_risk": "2D / 3B",
+            "risk_band":     "Tolerable",
+            "status":        "ACTIVE",
+        },
+        {
+            "filename":      "MOC for AirSial flights to Skardu with SAPS.pdf",
+            "ref":           "MOC/OPS/2026",
+            "title":         "SAPS Ground Handling SLA — Skardu Airport",
+            "scope":         "Ground handling and airport services SLA partnership with SAPS at Skardu Airport.",
+            "key_risks":     "Ramp space availability, GSE shortfalls, high-altitude cold weather servicing capabilities.",
+            "mitigated_risk": "2C",
+            "risk_band":     "Acceptable with Monitoring",
+            "status":        "OPEN",
+        },
+    ]
+
+    # ── Status styling helpers ───────────────────────────────────────────────
+    STATUS_STYLES = {
+        "COMPLETED":    {"bg": "#D1FAE5", "fg": "#065F46", "dot": "🟢"},
+        "CLOSED":       {"bg": "#E5E7EB", "fg": "#374151", "dot": "⚫"},
+        "UNDER REVIEW": {"bg": "#FEF3C7", "fg": "#92400E", "dot": "🟡"},
+        "ACTIVE":       {"bg": "#FEE2E2", "fg": "#991B1B", "dot": "🔴"},
+        "OPEN":         {"bg": "#DBEAFE", "fg": "#1E40AF", "dot": "🔵"},
+    }
+
+    RISK_BAND_STYLES = {
+        "Acceptable":                {"bg": "#D1FAE5", "fg": "#065F46"},
+        "Acceptable with Monitoring":{"bg": "#DBEAFE", "fg": "#1E40AF"},
+        "Tolerable":                 {"bg": "#FEF3C7", "fg": "#92400E"},
+        "Unacceptable":              {"bg": "#FEE2E2", "fg": "#991B1B"},
+    }
+
+    # ── Page header ─────────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
+        <h1 style="margin: 0; font-size: 2.2rem;">🔄 Management of Change — Compliance Registry</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.05rem;">
+            Authoritative register of active and archived MoC safety case files
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── KPI summary strip ────────────────────────────────────────────────────
+    status_counts = {}
+    for entry in MOC_REGISTER:
+        s = entry["status"]
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    kpi_cols = st.columns(len(MOC_REGISTER) + 1)
+
+    with kpi_cols[0]:
+        st.markdown(f"""
+        <div style="background:#1e3c72; color:white; border-radius:12px;
+                    padding:18px 10px; text-align:center;">
+            <div style="font-size:2rem; font-weight:700;">{len(MOC_REGISTER)}</div>
+            <div style="font-size:0.8rem; opacity:0.85; margin-top:4px;">Total MoC Files</div>
+        </div>""", unsafe_allow_html=True)
+
+    for col, (status, count) in zip(kpi_cols[1:], status_counts.items()):
+        style = STATUS_STYLES.get(status, {"bg": "#F3F4F6", "fg": "#374151", "dot": "⚪"})
+        with col:
+            st.markdown(f"""
+            <div style="background:{style['bg']}; border-radius:12px;
+                        padding:18px 10px; text-align:center;">
+                <div style="font-size:2rem; font-weight:700; color:{style['fg']};">{count}</div>
+                <div style="font-size:0.75rem; color:{style['fg']}; margin-top:4px;">
+                    {style['dot']} {status}
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Corporate MoC Matrix ─────────────────────────────────────────────────
+    st.markdown("### 📋 MoC Safety Case Register")
+
+    for entry in MOC_REGISTER:
+        s_style = STATUS_STYLES.get(entry["status"], {"bg": "#F3F4F6", "fg": "#374151", "dot": "⚪"})
+        r_style = RISK_BAND_STYLES.get(entry["risk_band"], {"bg": "#F3F4F6", "fg": "#374151"})
+
+        st.markdown(f"""
+        <div style="background:#FFFFFF; border:1px solid #E5E7EB; border-left:5px solid {s_style['fg']};
+                    border-radius:12px; padding:20px 24px; margin-bottom:14px;
+                    box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+
+            <!-- Row 1: ref + title + status badge -->
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
+                <div>
+                    <span style="background:#EFF6FF; color:#1E40AF; font-size:0.75rem;
+                                 font-weight:700; padding:3px 10px; border-radius:20px;
+                                 letter-spacing:0.05em;">
+                        {entry['ref']}
+                    </span>
+                    <span style="font-size:1.05rem; font-weight:700; color:#111827;
+                                 margin-left:12px;">
+                        {entry['title']}
+                    </span>
+                </div>
+                <span style="background:{s_style['bg']}; color:{s_style['fg']};
+                             font-size:0.78rem; font-weight:700; padding:4px 14px;
+                             border-radius:20px; white-space:nowrap;">
+                    {s_style['dot']} {entry['status']}
+                </span>
+            </div>
+
+            <!-- Row 2: detail grid -->
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-top:14px;">
+
+                <div>
+                    <div style="font-size:0.72rem; font-weight:600; color:#6B7280;
+                                text-transform:uppercase; letter-spacing:0.07em; margin-bottom:4px;">
+                        Scope
+                    </div>
+                    <div style="font-size:0.88rem; color:#374151; line-height:1.45;">
+                        {entry['scope']}
+                    </div>
+                </div>
+
+                <div>
+                    <div style="font-size:0.72rem; font-weight:600; color:#6B7280;
+                                text-transform:uppercase; letter-spacing:0.07em; margin-bottom:4px;">
+                        Key Risks Identified
+                    </div>
+                    <div style="font-size:0.88rem; color:#374151; line-height:1.45;">
+                        {entry['key_risks']}
+                    </div>
+                </div>
+
+                <div>
+                    <div style="font-size:0.72rem; font-weight:600; color:#6B7280;
+                                text-transform:uppercase; letter-spacing:0.07em; margin-bottom:4px;">
+                        Mitigated Risk Index
+                    </div>
+                    <div style="display:inline-block; background:{r_style['bg']};
+                                color:{r_style['fg']}; font-size:0.9rem; font-weight:700;
+                                padding:4px 14px; border-radius:8px; margin-top:2px;">
+                        {entry['mitigated_risk']}
+                    </div>
+                    <div style="font-size:0.78rem; color:{r_style['fg']}; margin-top:4px;">
+                        {entry['risk_band']}
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Document Inspector ───────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📂 Inspect Safety Case File")
+
+    if drive_db is None:
+        st.info(
+            "ℹ️ Google Drive integration is not initialised. "
+            "Configure credentials in Streamlit Secrets to enable document retrieval."
+        )
+        return
+
+    # Silently fetch the live directory listing
+    try:
+        drive_files = drive_db.list_saved_pdfs()   # [{'name': '...', 'id': '...'}, ...]
+    except Exception as e:
+        st.error(f"Unable to reach the document archive: {e}")
+        return
+
+    # Build a case-insensitive lookup: normalised_filename -> drive file id
+    drive_lookup = {f["name"].strip().lower(): f["id"] for f in drive_files}
+
+    # Match each MoC register entry against what is actually on Drive
+    matched_options = []   # list of (dropdown_label, drive_file_id)
+    for entry in MOC_REGISTER:
+        normalised = entry["filename"].strip().lower()
+        file_id = drive_lookup.get(normalised)
+        if file_id:
+            label = f"{entry['ref']}  —  {entry['title']}"
+            matched_options.append((label, file_id, entry))
+
+    if not matched_options:
+        st.warning(
+            "No MoC files could be matched to the Drive archive at this time. "
+            "Ensure the five case files are present in the designated Drive folder."
+        )
+        return
+
+    # Dropdown — human-readable labels only
+    dropdown_labels = [opt[0] for opt in matched_options]
+    selected_label  = st.selectbox(
+        "Select MoC Case File to Inspect:",
+        dropdown_labels,
+        help="Displays files currently available in the secure Drive archive."
+    )
+
+    # Retrieve the matching tuple
+    selected_tuple = next(opt for opt in matched_options if opt[0] == selected_label)
+    _, selected_file_id, selected_entry = selected_tuple
+
+    # Contextual metadata card for the chosen file
+    s_style = STATUS_STYLES.get(selected_entry["status"], {"bg": "#F3F4F6", "fg": "#374151", "dot": "⚪"})
+    st.markdown(f"""
+    <div style="background:#F9FAFB; border:1px solid #E5E7EB; border-radius:10px;
+                padding:16px 20px; margin:10px 0 18px 0;">
+        <span style="font-weight:700; color:#1e3c72;">{selected_entry['ref']}</span>
+        &nbsp;·&nbsp;
+        <span style="color:#374151;">{selected_entry['title']}</span>
+        &nbsp;&nbsp;
+        <span style="background:{s_style['bg']}; color:{s_style['fg']}; font-size:0.78rem;
+                     font-weight:700; padding:3px 12px; border-radius:20px;">
+            {s_style['dot']} {selected_entry['status']}
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Retrieve and render
+    if st.button("📄 Inspect Safety Case File", type="primary", use_container_width=False):
+        with st.spinner("Retrieving document from secure Drive archive…"):
             try:
-                all_drive_files = drive_db.list_saved_pdfs()
-                # Filter down exclusively to MoC related files
-                moc_files = [f for f in all_drive_files if "moc" in f["name"].lower() or "change" in f["name"].lower() or "sms" in f["name"].lower()]
-            except Exception:
-                moc_files = []
-        
-        if moc_files:
-            file_manifest = {f["name"]: f["id"] for f in moc_files}
-            
-            # Clean layout selection elements
-            selected_report = st.selectbox(
-                "Select Verified Safety MoC Case File:", 
-                list(file_manifest.keys()),
-                index=0
-            )
-            
-            # Action controls
-            if st.button("📥 Load and Inspect MoC Document"):
-                target_file_id = file_manifest[selected_report]
-                
-                with st.spinner("Decrypting and pulling from secure Drive folder..."):
-                    try:
-                        pdf_data = drive_db.fetch_pdf(target_file_id)
-                        
-                        # Native Streamlit PDF Display element
-                        st.success(f"Loaded: {selected_doc}")
-                        st.pdf(pdf_data)
-                    except Exception as e:
-                        st.error(f"Failed loading document context: {e}")
-        else:
-            st.info("No explicit Management of Change (MoC) PDFs found in your root cloud folder.")
-    else:
-        st.error("Google Drive connection layer is currently uninitialized.")
+                pdf_bytes = drive_db.fetch_pdf(selected_file_id)
+                st.success(f"Loaded: {selected_entry['filename']}")
+                st.pdf(pdf_bytes)
+            except Exception as e:
+                st.error(f"Failed to retrieve document: {e}")
 
 def render_predictive_monitor():
     """Predictive Safety Monitoring Dashboard."""
