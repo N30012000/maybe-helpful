@@ -9859,13 +9859,14 @@ def render_moc_workflow():
                 padding: 30px; border-radius: 15px; margin-bottom: 25px; color: white;">
         <h1 style="margin: 0; font-size: 2.2rem;">🔄 Management of Change</h1>
         <p style="margin: 10px 0 0 0; opacity: 0.9; font-size: 1.1rem;">
-            Change management and risk assessment workflow
+            Change management, risk assessment, and document workflow
         </p>
     </div>
     """, unsafe_allow_html=True)
     
-    tab_new, tab_pending, tab_approved = st.tabs([
-        "➕ New Change Request", "⏳ Pending Review", "✅ Approved Changes"
+    # 4 TABS DEFINED HERE
+    tab_new, tab_pending, tab_approved, tab_drive = st.tabs([
+        "➕ New Change Request", "⏳ Pending Review", "✅ Approved Changes", "☁️ MoC Documents"
     ])
     
     with tab_new:
@@ -9882,7 +9883,6 @@ def render_moc_workflow():
             description = st.text_area("Change Description", height=150)
             justification = st.text_area("Business Justification", height=100)
             
-            # Risk assessment
             st.markdown("#### Risk Assessment")
             
             risk_col1, risk_col2 = st.columns(2)
@@ -9894,7 +9894,6 @@ def render_moc_workflow():
             
             mitigations = st.text_area("Proposed Risk Mitigations", height=100)
             
-            # Approvers
             st.markdown("#### Approval Chain")
             dept_approval = st.multiselect(
                 "Departments Required",
@@ -9943,8 +9942,9 @@ def render_moc_workflow():
     with tab_approved:
         st.markdown("### ✅ Approved Changes")
         st.info("No approved changes to display.")
-import streamlit as st
-with tab_drive:
+
+    # TAB_DRIVE IS SAFELY INDENTED INSIDE THE FUNCTION
+    with tab_drive:
         st.markdown("### ☁️ MoC Document Storage")
         drive_db = st.session_state.get('drive_db', None)
         
@@ -9973,7 +9973,6 @@ with tab_drive:
                         with st.spinner("Downloading from secure Drive container..."):
                             pdf_content = drive_db.fetch_pdf(target_id)
                             
-                            # Safely render the PDF using base64 formatting
                             import base64
                             base64_pdf = base64.b64encode(pdf_content).decode('utf-8')
                             pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
@@ -9984,6 +9983,7 @@ with tab_drive:
                 st.error(f"Error connecting to Drive: {e}")
         else:
             st.error("Google Drive backend is not initialized. Please ensure 'drive_store.py' and your credentials are set up correctly.")
+            
 def render_moc_document_center():
     """
     Management of Change (MoC) Compliance Registry Dashboard.
