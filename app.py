@@ -9944,7 +9944,46 @@ def render_moc_workflow():
         st.markdown("### ✅ Approved Changes")
         st.info("No approved changes to display.")
 import streamlit as st
-
+with tab_drive:
+        st.markdown("### ☁️ MoC Document Storage")
+        drive_db = st.session_state.get('drive_db', None)
+        
+        if drive_db:
+            st.subheader("Upload MoC Attachments")
+            uploaded_pdf = st.file_uploader("Choose a PDF file", type=["pdf"], key="moc_uploader")
+            
+            if uploaded_pdf is not None:
+                if st.button("🚀 Push to Cloud Storage"):
+                    with st.spinner("Uploading to Google Drive secure layer..."):
+                        raw_bytes = uploaded_pdf.read()
+                        drive_file_id = drive_db.upload_pdf(uploaded_pdf.name, raw_bytes)
+                        st.success(f"Successfully uploaded! Document Saved ID: `{drive_file_id}`")
+            
+            st.markdown("---")
+            st.subheader("Fetch Existing MoC Documents")
+            
+            try:
+                saved_files = drive_db.list_saved_pdfs()
+                if saved_files:
+                    file_options = {f["name"]: f["id"] for f in saved_files}
+                    selected_doc_name = st.selectbox("Select document to retrieve:", list(file_options.keys()))
+                    
+                    if st.button("📥 Retrieve Document"):
+                        target_id = file_options[selected_doc_name]
+                        with st.spinner("Downloading from secure Drive container..."):
+                            pdf_content = drive_db.fetch_pdf(target_id)
+                            
+                            # Safely render the PDF using base64 formatting
+                            import base64
+                            base64_pdf = base64.b64encode(pdf_content).decode('utf-8')
+                            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+                            st.markdown(pdf_display, unsafe_allow_html=True)
+                else:
+                    st.warning("No files found currently inside your shared Google Drive workspace folder.")
+            except Exception as e:
+                st.error(f"Error connecting to Drive: {e}")
+        else:
+            st.error("Google Drive backend is not initialized. Please ensure 'drive_store.py' and your credentials are set up correctly.")
 def render_moc_document_center():
     """
     Management of Change (MoC) Compliance Registry Dashboard.
