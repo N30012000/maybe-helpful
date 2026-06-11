@@ -9878,6 +9878,8 @@ def render_audit_findings():
                     finding['status'] = new_status
                     st.success("Status updated!")
 
+# Add this line right before the error line:
+drive_db = st.session_state.get('drive_db', None)
 
 if drive_db:
     # 1. HANDLE UPLOAD ROUTINE (e.g., Inside a custom form)
