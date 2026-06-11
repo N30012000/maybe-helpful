@@ -11225,6 +11225,15 @@ def initialize_session_state():
     
     if 'current_page' not in st.session_state:
         st.session_state['current_page'] = 'Dashboard'
+        
+    # 🚀 GOOGLE DRIVE INITIALIZATION RESTORED
+    if 'drive_db' not in st.session_state:
+        try:
+            from drive_store import GoogleDriveBackend
+            st.session_state['drive_db'] = GoogleDriveBackend()
+        except Exception as e:
+            st.session_state['drive_db'] = None
+            st.session_state['drive_error'] = str(e)
     
     # Report data storage
     report_types = [
@@ -11258,7 +11267,7 @@ def initialize_session_state():
     
     if 'email_settings' not in st.session_state:
         st.session_state['email_settings'] = {}
-    
+        
     if supabase.connected:
         if 'db_loaded' not in st.session_state:
             for report_type in report_types:
