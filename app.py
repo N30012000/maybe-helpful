@@ -697,7 +697,7 @@ def initialize_session_state():
             st.session_state[report_type] = []
     
     # Updated database loading logic in initialize_session_state()
-    if supabase.connected:
+if supabase.connected:
     if 'db_loaded' not in st.session_state:
         for report_type in report_types:
             if not st.session_state[report_type]:  
