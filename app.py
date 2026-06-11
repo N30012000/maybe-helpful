@@ -10007,7 +10007,50 @@ def render_moc_workflow():
     with tab_approved:
         st.markdown("### ✅ Approved Changes")
         st.info("No approved changes to display.")
+import streamlit as st
 
+def render_moc_document_center():
+    st.markdown("### ✈️ Management of Change (MoC) Compliance Registry")
+    
+    # 1. Fetch file names silently from Google Drive
+    drive_db = st.session_state.get('drive_db', None)
+    
+    if drive_db:
+        with st.spinner("Syncing safety case archives..."):
+            try:
+                all_drive_files = drive_db.list_saved_pdfs()
+                # Filter down exclusively to MoC related files
+                moc_files = [f for f in all_drive_files if "moc" in f["name"].lower() or "change" in f["name"].lower() or "sms" in f["name"].lower()]
+            except Exception:
+                moc_files = []
+        
+        if moc_files:
+            file_manifest = {f["name"]: f["id"] for f in moc_files}
+            
+            # Clean layout selection elements
+            selected_report = st.selectbox(
+                "Select Verified Safety MoC Case File:", 
+                list(file_manifest.keys()),
+                index=0
+            )
+            
+            # Action controls
+            if st.button("📥 Load and Inspect MoC Document"):
+                target_file_id = file_manifest[selected_report]
+                
+                with st.spinner("Decrypting and pulling from secure Drive folder..."):
+                    try:
+                        pdf_data = drive_db.fetch_pdf(target_file_id)
+                        
+                        # Native Streamlit PDF Display element
+                        st.success(f"Loaded: {selected_doc}")
+                        st.pdf(pdf_data)
+                    except Exception as e:
+                        st.error(f"Failed loading document context: {e}")
+        else:
+            st.info("No explicit Management of Change (MoC) PDFs found in your root cloud folder.")
+    else:
+        st.error("Google Drive connection layer is currently uninitialized.")
 
 def render_predictive_monitor():
     """Predictive Safety Monitoring Dashboard."""
