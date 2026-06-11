@@ -9869,7 +9869,52 @@ def render_audit_findings():
                 if st.button("Update", key=f"update_{finding['id']}"):
                     finding['status'] = new_status
                     st.success("Status updated!")
+import streamlit as st
+from drive_store import GoogleDriveBackend
 
+# Initialize our free Drive storage layer
+try:
+    drive_db = GoogleDriveBackend()
+    st.sidebar.success("🔗 Connected to Free Google Drive Bucket")
+except Exception as e:
+    st.sidebar.error(f"Failed connecting to storage system: {e}")
+    drive_db = None
+
+st.title("Document Center Integration")
+
+if drive_db:
+    # 1. HANDLE UPLOAD ROUTINE (e.g., Inside a custom form)
+    st.subheader("Upload Safety Attachments")
+    uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
+    
+    if uploaded_file is not None:
+        if st.button("🚀 Push to Cloud Storage"):
+            with st.spinner("Uploading to Google Drive secure layer..."):
+                raw_bytes = uploaded_file.read()
+                # Run upload operation
+                drive_file_id = drive_db.upload_pdf(uploaded_file.name, raw_bytes)
+                st.success(f"Successfully uploaded! Document Saved ID: `{drive_file_id}`")
+                st.info("You can store this safe file ID inside session_state or your metadata records!")
+
+    # 2. HANDLE FETCH ROUTINE (e.g., Inside View Reports/Detail metrics)
+    st.markdown("---")
+    st.subheader("Fetch Existing Safety System Logs")
+    
+    saved_files = drive_db.list_saved_pdfs()
+    
+    if saved_files:
+        file_options = {f["name"]: f["id"] for f in saved_files}
+        selected_doc_name = st.selectbox("Select document to retrieve:", list(file_options.keys()))
+        
+        if st.button("📥 Retrieve Document"):
+            target_id = file_options[selected_doc_name]
+            with st.spinner("Downloading from secure Drive container..."):
+                pdf_content = drive_db.fetch_pdf(target_id)
+                
+                # Render using native PDF display features
+                st.pdf(pdf_content)
+    else:
+        st.warning("No files found currently inside your shared Google Drive workspace folder.")
 
 def render_moc_workflow():
     """Management of Change workflow."""
