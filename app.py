@@ -9848,8 +9848,6 @@ def render_audit_findings():
                     finding['status'] = new_status
                     st.success("Status updated!")
 
-# Add this line right before the error line:
-drive_db = st.session_state.get('drive_db', None)
 
 
 
